@@ -64,6 +64,7 @@ See https://github.com/adobe-type-tools/cmap-resources
 
           "display-cmap_reader_factory": "../src/display/cmap_reader_factory.js",
           "display-standard_fontdata_factory": "../src/display/standard_fontdata_factory.js",
+          "display-wasm_factory": "../src/display/wasm_factory.js",
           "display-fetch_stream": "../src/display/fetch_stream.js",
           "display-network": "../src/display/network.js",
           "display-node_stream": "../src/display/stubs.js",
@@ -301,6 +302,27 @@ See https://github.com/adobe-type-tools/cmap-resources
                         <div class="editorParamsSetter">
                           <label for="editorInkOpacity" class="editorParamsLabel" data-l10n-id="pdfjs-editor-ink-opacity-input">Opacity</label>
                           <input type="range" id="editorInkOpacity" class="editorParamsSlider" value="1" min="0.05" max="1" step="0.05" tabindex="0">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="editorRect" class="toolbarButtonWithContainer">
+                    <button id="editorRectButton" class="toolbarButton" type="button" disabled="disabled" title="Draw" role="radio" aria-expanded="false" aria-haspopup="true" aria-controls="editorRectParamsToolbar" tabindex="0" data-l10n-id="pdfjs-editor-rect-button">
+                      <span data-l10n-id="pdfjs-editor-rect-button-label">Rect</span>
+                    </button>
+                    <div class="editorParamsToolbar hidden doorHangerRight" id="editorRectParamsToolbar">
+                      <div class="editorParamsToolbarContainer">
+                        <div class="editorParamsSetter">
+                          <label for="editorRectColor" class="editorParamsLabel" data-l10n-id="pdfjs-editor-rect-color-input">Color</label>
+                          <input type="color" id="editorRectColor" class="editorParamsColor" tabindex="0">
+                        </div>
+                        <div class="editorParamsSetter">
+                          <label for="editorRectThickness" class="editorParamsLabel" data-l10n-id="pdfjs-editor-rect-thickness-input">Thickness</label>
+                          <input type="range" id="editorRectThickness" class="editorParamsSlider" value="1" min="1" max="20" step="1" tabindex="0">
+                        </div>
+                        <div class="editorParamsSetter">
+                          <label for="editorRectOpacity" class="editorParamsLabel" data-l10n-id="pdfjs-editor-rect-opacity-input">Opacity</label>
+                          <input type="range" id="editorRectOpacity" class="editorParamsSlider" value="1" min="0.05" max="1" step="0.05" tabindex="0">
                         </div>
                       </div>
                     </div>
