@@ -1,6 +1,6 @@
 # PDF.js [![Build Status](https://github.com/mozilla/pdf.js/workflows/CI/badge.svg?branch=master)](https://github.com/mozilla/pdf.js/actions?query=workflow%3ACI+branch%3Amaster)
 
-[PDF.js](https://mozilla.github.io/pdf.js/) is a Portable Document Format (PDF) viewer that is built with HTML5.
+[PDF.js](https://marcelinombb.github.io/pdf.js/) is a Portable Document Format (PDF) viewer that is built with HTML5.
 
 PDF.js is community-driven and supported by Mozilla. Our goal is to
 create a general-purpose, web standards-based platform for parsing and
@@ -26,9 +26,9 @@ Feel free to stop by our [Matrix room](https://chat.mozilla.org/#/room/#pdfjs:mo
 Please note that the "Modern browsers" version assumes native support for the
 latest JavaScript features; please also see [this wiki page](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions#faq-support).
 
-+ Modern browsers: https://mozilla.github.io/pdf.js/web/viewer.html
++ Modern browsers: https://marcelinombb.github.io/pdf.js/web/viewer.html
 
-+ Older browsers: https://mozilla.github.io/pdf.js/legacy/web/viewer.html
++ Older browsers: https://marcelinombb.github.io/pdf.js/legacy/web/viewer.html
 
 ### Browser Extensions
 
@@ -105,7 +105,7 @@ PDF.js is hosted on several free CDNs:
 
 You can play with the PDF.js API directly from your browser using the live demos below:
 
-+ [Interactive examples](https://mozilla.github.io/pdf.js/examples/index.html#interactive-examples)
++ [Interactive examples](https://marcelinombb.github.io/pdf.js/pdf.js/examples/index.html#interactive-examples)
 
 More examples can be found in the [examples folder](https://github.com/mozilla/pdf.js/tree/master/examples/). Some of them are using the pdfjs-dist package, which can be built and installed in this repo directory via `npx gulp dist-install` command.
 
