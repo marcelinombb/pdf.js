@@ -32,6 +32,7 @@ import { HighlightEditor } from "./highlight.js";
 import { InkEditor } from "./ink.js";
 import { RectEditor } from "./rect.js";
 import { setLayerDimensions } from "../display_utils.js";
+import { SignatureEditor } from "./signature.js";
 import { StampEditor } from "./stamp.js";
 
 /**
@@ -90,9 +91,14 @@ class AnnotationEditorLayer {
   static _initialized = false;
 
   static #editorTypes = new Map(
-    [FreeTextEditor, InkEditor, RectEditor, StampEditor, HighlightEditor].map(
-      type => [type._editorType, type]
-    )
+    [
+      FreeTextEditor,
+      InkEditor,
+      RectEditor,
+      StampEditor,
+      HighlightEditor,
+      SignatureEditor,
+    ].map(type => [type._editorType, type])
   );
 
   /**
@@ -622,9 +628,9 @@ class AnnotationEditorLayer {
    * @param {number} mode
    * @param {Object} params
    */
-  pasteEditor(mode, params) {
+  async pasteEditor(mode, params) {
     this.#uiManager.updateToolbar(mode);
-    this.#uiManager.updateMode(mode);
+    await this.#uiManager.updateMode(mode);
 
     const { offsetX, offsetY } = this.#getCenterPoint();
     const id = this.getNextId();
@@ -699,8 +705,12 @@ class AnnotationEditorLayer {
   /**
    * Create and add a new editor.
    */
-  addNewEditor() {
-    this.createAndAddNewEditor(this.#getCenterPoint(), /* isCentered = */ true);
+  addNewEditor(data = {}) {
+    this.createAndAddNewEditor(
+      this.#getCenterPoint(),
+      /* isCentered = */ true,
+      data
+    );
   }
 
   /**
@@ -768,7 +778,11 @@ class AnnotationEditorLayer {
       return;
     }
 
-    if (this.#uiManager.getMode() === AnnotationEditorType.STAMP) {
+    const currentMode = this.#uiManager.getMode();
+    if (
+      currentMode === AnnotationEditorType.STAMP ||
+      currentMode === AnnotationEditorType.SIGNATURE
+    ) {
       this.#uiManager.unselectAll();
       return;
     }
@@ -815,7 +829,9 @@ class AnnotationEditorLayer {
   }
 
   startDrawingSession(event) {
-    this.div.focus();
+    this.div.focus({
+      preventScroll: true,
+    });
     if (this.#drawingAC) {
       this.#currentEditorType.startDrawing(this, this.#uiManager, false, event);
       return;

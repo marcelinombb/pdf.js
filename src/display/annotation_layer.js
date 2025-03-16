@@ -47,13 +47,6 @@ const DEFAULT_TAB_INDEX = 1000;
 const DEFAULT_FONT_SIZE = 9;
 const GetElementsByNameSet = new WeakSet();
 
-function getRectDims(rect) {
-  return {
-    width: rect[2] - rect[0],
-    height: rect[3] - rect[1],
-  };
-}
-
 /**
  * @typedef {Object} AnnotationElementParameters
  * @property {Object} data
@@ -246,12 +239,11 @@ class AnnotationElement {
       },
     } = this;
     currentRect?.splice(0, 4, ...rect);
-    const { width, height } = getRectDims(rect);
     style.left = `${(100 * (rect[0] - pageX)) / pageWidth}%`;
     style.top = `${(100 * (pageHeight - rect[3] + pageY)) / pageHeight}%`;
     if (rotation === 0) {
-      style.width = `${(100 * width) / pageWidth}%`;
-      style.height = `${(100 * height) / pageHeight}%`;
+      style.width = `${(100 * /* width = */ (rect[2] - rect[0])) / pageWidth}%`;
+      style.height = `${(100 * /* height = */ (rect[3] - rect[1])) / pageHeight}%`;
     } else {
       this.setRotation(rotation);
     }
@@ -300,8 +292,7 @@ class AnnotationElement {
       }
       return container;
     }
-
-    const { width, height } = getRectDims(data.rect);
+    const { width, height } = this;
 
     if (!ignoreBorder && data.borderStyle.width > 0) {
       style.borderWidth = `${data.borderStyle.width}px`;
@@ -309,10 +300,10 @@ class AnnotationElement {
       const horizontalRadius = data.borderStyle.horizontalCornerRadius;
       const verticalRadius = data.borderStyle.verticalCornerRadius;
       if (horizontalRadius > 0 || verticalRadius > 0) {
-        const radius = `calc(${horizontalRadius}px * var(--scale-factor)) / calc(${verticalRadius}px * var(--scale-factor))`;
+        const radius = `calc(${horizontalRadius}px * var(--total-scale-factor)) / calc(${verticalRadius}px * var(--total-scale-factor))`;
         style.borderRadius = radius;
       } else if (this instanceof RadioButtonWidgetAnnotationElement) {
-        const radius = `calc(${width}px * var(--scale-factor)) / calc(${height}px * var(--scale-factor))`;
+        const radius = `calc(${width}px * var(--total-scale-factor)) / calc(${height}px * var(--total-scale-factor))`;
         style.borderRadius = radius;
       }
 
@@ -384,19 +375,13 @@ class AnnotationElement {
       return;
     }
     const { pageWidth, pageHeight } = this.parent.viewport.rawDims;
-    const { width, height } = getRectDims(this.data.rect);
+    let { width, height } = this;
 
-    let elementWidth, elementHeight;
-    if (angle % 180 === 0) {
-      elementWidth = (100 * width) / pageWidth;
-      elementHeight = (100 * height) / pageHeight;
-    } else {
-      elementWidth = (100 * height) / pageWidth;
-      elementHeight = (100 * width) / pageHeight;
+    if (angle % 180 !== 0) {
+      [width, height] = [height, width];
     }
-
-    container.style.width = `${elementWidth}%`;
-    container.style.height = `${elementHeight}%`;
+    container.style.width = `${(100 * width) / pageWidth}%`;
+    container.style.height = `${(100 * height) / pageHeight}%`;
 
     container.setAttribute("data-main-rotation", (360 - angle) % 360);
   }
@@ -750,6 +735,14 @@ class AnnotationElement {
         editId,
       });
     });
+  }
+
+  get width() {
+    return this.data.rect[2] - this.data.rect[0];
+  }
+
+  get height() {
+    return this.data.rect[3] - this.data.rect[1];
   }
 }
 
@@ -1204,7 +1197,7 @@ class WidgetAnnotationElement extends AnnotationElement {
         roundToOneDecimal(height / LINE_FACTOR)
       );
     }
-    style.fontSize = `calc(${computedFontSize}px * var(--scale-factor))`;
+    style.fontSize = `calc(${computedFontSize}px * var(--total-scale-factor))`;
 
     style.color = Util.makeHexColor(fontColor[0], fontColor[1], fontColor[2]);
 
@@ -1289,7 +1282,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         }
       } else {
         element = document.createElement("input");
-        element.type = "text";
+        element.type = this.data.password ? "password" : "text";
         element.setAttribute("value", fieldFormattedValues ?? textContent);
         if (this.data.doNotScroll) {
           element.style.overflowX = "hidden";
@@ -1563,7 +1556,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         const combWidth = fieldWidth / maxLen;
 
         element.classList.add("comb");
-        element.style.letterSpacing = `calc(${combWidth}px * var(--scale-factor) - 1ch)`;
+        element.style.letterSpacing = `calc(${combWidth}px * var(--total-scale-factor) - 1ch)`;
       }
     } else {
       element = document.createElement("div");
@@ -2209,23 +2202,7 @@ class PopupElement {
       const baseColor = (popup.style.outlineColor = Util.makeHexColor(
         ...this.#color
       ));
-      if (
-        (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-        CSS.supports("background-color", "color-mix(in srgb, red 30%, white)")
-      ) {
-        popup.style.backgroundColor = `color-mix(in srgb, ${baseColor} 30%, white)`;
-      } else {
-        // color-mix isn't supported in some browsers hence this version.
-        // See https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/color-mix#browser_compatibility
-        // TODO: Use color-mix when it's supported everywhere.
-        // Enlighten the color.
-        const BACKGROUND_ENLIGHT = 0.7;
-        popup.style.backgroundColor = Util.makeHexColor(
-          ...this.#color.map(c =>
-            Math.floor(BACKGROUND_ENLIGHT * (255 - c) + c)
-          )
-        );
-      }
+      popup.style.backgroundColor = `color-mix(in srgb, ${baseColor} 30%, white)`;
     }
 
     const header = document.createElement("span");
@@ -2305,7 +2282,7 @@ class PopupElement {
       style: {
         color: this.#fontColor,
         fontSize: this.#fontSize
-          ? `calc(${this.#fontSize}px * var(--scale-factor))`
+          ? `calc(${this.#fontSize}px * var(--total-scale-factor))`
           : "",
       },
     };
@@ -2540,8 +2517,7 @@ class LineAnnotationElement extends AnnotationElement {
     // Create an invisible line with the same starting and ending coordinates
     // that acts as the trigger for the popup. Only the line itself should
     // trigger the popup, not the entire container.
-    const data = this.data;
-    const { width, height } = getRectDims(data.rect);
+    const { data, width, height } = this;
     const svg = this.svgFactory.create(
       width,
       height,
@@ -2595,8 +2571,7 @@ class SquareAnnotationElement extends AnnotationElement {
     // Create an invisible square with the same rectangle that acts as the
     // trigger for the popup. Only the square itself should trigger the
     // popup, not the entire container.
-    const data = this.data;
-    const { width, height } = getRectDims(data.rect);
+    const { data, width, height } = this;
     const svg = this.svgFactory.create(
       width,
       height,
@@ -2652,8 +2627,7 @@ class CircleAnnotationElement extends AnnotationElement {
     // Create an invisible circle with the same ellipse that acts as the
     // trigger for the popup. Only the circle itself should trigger the
     // popup, not the entire container.
-    const data = this.data;
-    const { width, height } = getRectDims(data.rect);
+    const { data, width, height } = this;
     const svg = this.svgFactory.create(
       width,
       height,
@@ -2715,11 +2689,12 @@ class PolylineAnnotationElement extends AnnotationElement {
     // popup, not the entire container.
     const {
       data: { rect, vertices, borderStyle, popupRef },
+      width,
+      height,
     } = this;
     if (!vertices) {
       return this.container;
     }
-    const { width, height } = getRectDims(rect);
     const svg = this.svgFactory.create(
       width,
       height,
@@ -3353,8 +3328,7 @@ class AnnotationLayer {
       }
       const isPopupAnnotation = data.annotationType === AnnotationType.POPUP;
       if (!isPopupAnnotation) {
-        const { width, height } = getRectDims(data.rect);
-        if (width <= 0 || height <= 0) {
+        if (data.rect[2] === data.rect[0] || data.rect[3] === data.rect[1]) {
           continue; // Ignore empty annotations.
         }
       } else {
@@ -3394,6 +3368,35 @@ class AnnotationLayer {
     }
 
     this.#setAnnotationCanvasMap();
+  }
+
+  /**
+   * Add link annotations to the annotation layer.
+   *
+   * @param {Array<Object>} annotations
+   * @param {IPDFLinkService} linkService
+   * @memberof AnnotationLayer
+   */
+  async addLinkAnnotations(annotations, linkService) {
+    const elementParams = {
+      data: null,
+      layer: this.div,
+      linkService,
+      svgFactory: new DOMSVGFactory(),
+      parent: this,
+    };
+    for (const data of annotations) {
+      data.borderStyle ||= AnnotationLayer._defaultBorderStyle;
+
+      elementParams.data = data;
+      const element = AnnotationElementFactory.create(elementParams);
+
+      if (!element.isRenderable) {
+        continue;
+      }
+      const rendered = element.render();
+      await this.#appendElement(rendered, data.id);
+    }
   }
 
   /**
@@ -3459,6 +3462,24 @@ class AnnotationLayer {
 
   getEditableAnnotation(id) {
     return this.#editableAnnotations.get(id);
+  }
+
+  /**
+   * @private
+   */
+  static get _defaultBorderStyle() {
+    return shadow(
+      this,
+      "_defaultBorderStyle",
+      Object.freeze({
+        width: 1,
+        rawWidth: 1,
+        style: AnnotationBorderStyleType.SOLID,
+        dashArray: [3],
+        horizontalCornerRadius: 0,
+        verticalCornerRadius: 0,
+      })
+    );
   }
 }
 

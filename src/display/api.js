@@ -18,6 +18,7 @@
  */
 
 import {
+  _isValidExplicitDest,
   AbortException,
   AnnotationMode,
   assert,
@@ -25,7 +26,6 @@ import {
   getVerbosityLevel,
   info,
   isNodeJS,
-  MAX_IMAGE_SIZE_TO_CACHE,
   RenderingIntentFlag,
   setVerbosityLevel,
   shadow,
@@ -72,7 +72,6 @@ import { XfaText } from "./xfa_text.js";
 
 const DEFAULT_RANGE_CHUNK_SIZE = 65536; // 2^16 = 65536
 const RENDERING_CANCELLED_TIMEOUT = 100; // ms
-const DELAYED_CLEANUP_TIMEOUT = 5000; // ms
 
 /**
  * @typedef { Int8Array | Uint8Array | Uint8ClampedArray |
@@ -126,6 +125,8 @@ const DELAYED_CLEANUP_TIMEOUT = 5000; // ms
  * @property {Object} [CMapReaderFactory] - The factory that will be used when
  *   reading built-in CMap files.
  *   The default value is {DOMCMapReaderFactory}.
+ * @property {string} [iccUrl] - The URL where the predefined ICC profiles are
+ *   located. Include the trailing slash.
  * @property {boolean} [useSystemFonts] - When `true`, fonts that aren't
  *   embedded in the PDF document will fallback to a system font.
  *   The default value is `true` in web environments and `false` in Node.js;
@@ -146,6 +147,9 @@ const DELAYED_CLEANUP_TIMEOUT = 5000; // ms
  *   the `CMapReaderFactory`, `StandardFontDataFactory`, and `WasmFactory`
  *   options are ignored.
  *   The default value is `true` in web environments and `false` in Node.js.
+ * @property {boolean} [useWasm] - Attempt to use WebAssembly in order to
+ *    improve e.g. image decoding performance.
+ *    The default value is `true`.
  * @property {boolean} [stopAtErrors] - Reject certain promises, e.g.
  *   `getOperatorList`, `getTextContent`, and `RenderTask`, when the associated
  *   PDF data cannot be successfully parsed, instead of attempting to recover
@@ -260,23 +264,21 @@ function getDocument(src = {}) {
     typeof src.docBaseUrl === "string" && !isDataScheme(src.docBaseUrl)
       ? src.docBaseUrl
       : null;
-  const cMapUrl = typeof src.cMapUrl === "string" ? src.cMapUrl : null;
+  const cMapUrl = getFactoryUrlProp(src.cMapUrl);
   const cMapPacked = src.cMapPacked !== false;
   const CMapReaderFactory =
     src.CMapReaderFactory ||
     (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC") && isNodeJS
       ? NodeCMapReaderFactory
       : DOMCMapReaderFactory);
-  const standardFontDataUrl =
-    typeof src.standardFontDataUrl === "string"
-      ? src.standardFontDataUrl
-      : null;
+  const iccUrl = getFactoryUrlProp(src.iccUrl);
+  const standardFontDataUrl = getFactoryUrlProp(src.standardFontDataUrl);
   const StandardFontDataFactory =
     src.StandardFontDataFactory ||
     (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC") && isNodeJS
       ? NodeStandardFontDataFactory
       : DOMStandardFontDataFactory);
-  const wasmUrl = typeof src.wasmUrl === "string" ? src.wasmUrl : null;
+  const wasmUrl = getFactoryUrlProp(src.wasmUrl);
   const WasmFactory =
     src.WasmFactory ||
     (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC") && isNodeJS
@@ -325,6 +327,7 @@ function getDocument(src = {}) {
       ? NodeFilterFactory
       : DOMFilterFactory);
   const enableHWA = src.enableHWA === true;
+  const useWasm = src.useWasm !== false;
 
   // Parameters whose default values depend on other parameters.
   const length = rangeTransport ? rangeTransport.length : (src.length ?? NaN);
@@ -336,7 +339,8 @@ function getDocument(src = {}) {
     typeof src.useWorkerFetch === "boolean"
       ? src.useWorkerFetch
       : (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-        (CMapReaderFactory === DOMCMapReaderFactory &&
+        !!(
+          CMapReaderFactory === DOMCMapReaderFactory &&
           StandardFontDataFactory === DOMStandardFontDataFactory &&
           WasmFactory === DOMWasmFactory &&
           cMapUrl &&
@@ -344,7 +348,8 @@ function getDocument(src = {}) {
           wasmUrl &&
           isValidFetchUrl(cMapUrl, document.baseURI) &&
           isValidFetchUrl(standardFontDataUrl, document.baseURI) &&
-          isValidFetchUrl(wasmUrl, document.baseURI));
+          isValidFetchUrl(wasmUrl, document.baseURI)
+        );
 
   // Parameters only intended for development/testing purposes.
   const styleElement =
@@ -413,14 +418,15 @@ function getDocument(src = {}) {
       canvasMaxAreaInBytes,
       fontExtraProperties,
       useSystemFonts,
-      cMapUrl: useWorkerFetch ? cMapUrl : null,
-      standardFontDataUrl: useWorkerFetch ? standardFontDataUrl : null,
-      wasmUrl: useWorkerFetch ? wasmUrl : null,
+      useWasm,
+      useWorkerFetch,
+      cMapUrl,
+      iccUrl,
+      standardFontDataUrl,
+      wasmUrl,
     },
   };
   const transportParams = {
-    disableFontFace,
-    fontExtraProperties,
     ownerDocument,
     pdfBug,
     styleElement,
@@ -528,17 +534,19 @@ function getUrlProp(val) {
   if (val instanceof URL) {
     return val.href;
   }
-  try {
-    // The full path is required in the 'url' field.
-    return new URL(val, window.location).href;
-  } catch {
+  if (typeof val === "string") {
     if (
       typeof PDFJSDev !== "undefined" &&
       PDFJSDev.test("GENERIC") &&
-      isNodeJS &&
-      typeof val === "string"
+      isNodeJS
     ) {
       return val; // Use the url as-is in Node.js environments.
+    }
+
+    // The full path is required in the 'url' field.
+    const url = URL.parse(val, window.location);
+    if (url) {
+      return url.href;
     }
   }
   throw new Error(
@@ -582,15 +590,30 @@ function getDataProp(val) {
   );
 }
 
-function isRefProxy(ref) {
-  return (
-    typeof ref === "object" &&
-    Number.isInteger(ref?.num) &&
-    ref.num >= 0 &&
-    Number.isInteger(ref?.gen) &&
-    ref.gen >= 0
-  );
+function getFactoryUrlProp(val) {
+  if (typeof val !== "string") {
+    return null;
+  }
+  if (val.endsWith("/")) {
+    return val;
+  }
+  throw new Error(`Invalid factory url: "${val}" must include trailing slash.`);
 }
+
+const isRefProxy = v =>
+  typeof v === "object" &&
+  Number.isInteger(v?.num) &&
+  v.num >= 0 &&
+  Number.isInteger(v?.gen) &&
+  v.gen >= 0;
+
+const isNameProxy = v => typeof v === "object" && typeof v?.name === "string";
+
+const isValidExplicitDest = _isValidExplicitDest.bind(
+  null,
+  /* validRef = */ isRefProxy,
+  /* validName = */ isNameProxy
+);
 
 /**
  * @typedef {Object} OnProgressParameters
@@ -606,39 +629,48 @@ function isRefProxy(ref) {
 class PDFDocumentLoadingTask {
   static #docId = 0;
 
-  constructor() {
-    this._capability = Promise.withResolvers();
-    this._transport = null;
-    this._worker = null;
+  /**
+   * @private
+   */
+  _capability = Promise.withResolvers();
 
-    /**
-     * Unique identifier for the document loading task.
-     * @type {string}
-     */
-    this.docId = `d${PDFDocumentLoadingTask.#docId++}`;
+  /**
+   * @private
+   */
+  _transport = null;
 
-    /**
-     * Whether the loading task is destroyed or not.
-     * @type {boolean}
-     */
-    this.destroyed = false;
+  /**
+   * @private
+   */
+  _worker = null;
 
-    /**
-     * Callback to request a password if a wrong or no password was provided.
-     * The callback receives two parameters: a function that should be called
-     * with the new password, and a reason (see {@link PasswordResponses}).
-     * @type {function}
-     */
-    this.onPassword = null;
+  /**
+   * Unique identifier for the document loading task.
+   * @type {string}
+   */
+  docId = `d${PDFDocumentLoadingTask.#docId++}`;
 
-    /**
-     * Callback to be able to monitor the loading progress of the PDF file
-     * (necessary to implement e.g. a loading bar).
-     * The callback receives an {@link OnProgressParameters} argument.
-     * @type {function}
-     */
-    this.onProgress = null;
-  }
+  /**
+   * Whether the loading task is destroyed or not.
+   * @type {boolean}
+   */
+  destroyed = false;
+
+  /**
+   * Callback to request a password if a wrong or no password was provided.
+   * The callback receives two parameters: a function that should be called
+   * with the new password, and a reason (see {@link PasswordResponses}).
+   * @type {function}
+   */
+  onPassword = null;
+
+  /**
+   * Callback to be able to monitor the loading progress of the PDF file
+   * (necessary to implement e.g. a loading bar).
+   * The callback receives an {@link OnProgressParameters} argument.
+   * @type {function}
+   */
+  onProgress = null;
 
   /**
    * Promise for document loading task completion.
@@ -675,6 +707,16 @@ class PDFDocumentLoadingTask {
 
     this._worker?.destroy();
     this._worker = null;
+  }
+
+  /**
+   * Attempt to fetch the raw data of the PDF document, when e.g.
+   *  - An exception was thrown during document initialization.
+   *  - An `onPassword` callback is delaying initialization.
+   * @returns {Promise<Uint8Array>}
+   */
+  async getData() {
+    return this._transport.getData();
   }
 }
 
@@ -1339,8 +1381,6 @@ class PDFDocumentProxy {
  * Proxy to a `PDFPage` in the worker thread.
  */
 class PDFPageProxy {
-  #delayedCleanupTimeout = null;
-
   #pendingCleanup = false;
 
   constructor(pageIndex, pageInfo, transport, pdfBug = false) {
@@ -1353,7 +1393,6 @@ class PDFPageProxy {
     this.commonObjs = transport.commonObjs;
     this.objs = new PDFObjects();
 
-    this._maybeCleanupAfterRender = false;
     this._intentStates = new Map();
     this.destroyed = false;
   }
@@ -1490,10 +1529,8 @@ class PDFPageProxy {
     );
     const { renderingIntent, cacheKey } = intentArgs;
     // If there was a pending destroy, cancel it so no cleanup happens during
-    // this call to render...
+    // this call to render.
     this.#pendingCleanup = false;
-    // ... and ensure that a delayed cleanup is always aborted.
-    this.#abortDelayedCleanup();
 
     optionalContentConfigPromise ||=
       this._transport.getOptionalContentConfig(renderingIntent);
@@ -1532,10 +1569,10 @@ class PDFPageProxy {
 
       // Attempt to reduce memory usage during *printing*, by always running
       // cleanup immediately once rendering has finished.
-      if (this._maybeCleanupAfterRender || intentPrint) {
+      if (intentPrint) {
         this.#pendingCleanup = true;
       }
-      this.#tryCleanup(/* delayed = */ !intentPrint);
+      this.#tryCleanup();
 
       if (error) {
         internalRenderTask.capability.reject(error);
@@ -1769,7 +1806,6 @@ class PDFPageProxy {
     }
     this.objs.clear();
     this.#pendingCleanup = false;
-    this.#abortDelayedCleanup();
 
     return Promise.all(waitOn);
   }
@@ -1783,7 +1819,7 @@ class PDFPageProxy {
    */
   cleanup(resetStats = false) {
     this.#pendingCleanup = true;
-    const success = this.#tryCleanup(/* delayed = */ false);
+    const success = this.#tryCleanup();
 
     if (resetStats && success) {
       this._stats &&= new StatTimer();
@@ -1793,23 +1829,10 @@ class PDFPageProxy {
 
   /**
    * Attempts to clean up if rendering is in a state where that's possible.
-   * @param {boolean} [delayed] - Delay the cleanup, to e.g. improve zooming
-   *   performance in documents with large images.
-   *   The default value is `false`.
    * @returns {boolean} Indicates if clean-up was successfully run.
    */
-  #tryCleanup(delayed = false) {
-    this.#abortDelayedCleanup();
-
+  #tryCleanup() {
     if (!this.#pendingCleanup || this.destroyed) {
-      return false;
-    }
-    if (delayed) {
-      this.#delayedCleanupTimeout = setTimeout(() => {
-        this.#delayedCleanupTimeout = null;
-        this.#tryCleanup(/* delayed = */ false);
-      }, DELAYED_CLEANUP_TIMEOUT);
-
       return false;
     }
     for (const { renderTasks, operatorList } of this._intentStates.values()) {
@@ -1821,13 +1844,6 @@ class PDFPageProxy {
     this.objs.clear();
     this.#pendingCleanup = false;
     return true;
-  }
-
-  #abortDelayedCleanup() {
-    if (this.#delayedCleanupTimeout) {
-      clearTimeout(this.#delayedCleanupTimeout);
-      this.#delayedCleanupTimeout = null;
-    }
   }
 
   /**
@@ -1863,7 +1879,7 @@ class PDFPageProxy {
     }
 
     if (operatorListChunk.lastChunk) {
-      this.#tryCleanup(/* delayed = */ true);
+      this.#tryCleanup();
     }
   }
 
@@ -1926,7 +1942,7 @@ class PDFPageProxy {
             for (const internalRenderTask of intentState.renderTasks) {
               internalRenderTask.operatorListChanged();
             }
-            this.#tryCleanup(/* delayed = */ true);
+            this.#tryCleanup();
           }
 
           if (intentState.displayReadyCapability) {
@@ -2101,14 +2117,9 @@ class PDFWorker {
       // Check if URLs have the same origin. For non-HTTP based URLs, returns
       // false.
       this._isSameOrigin = (baseUrl, otherUrl) => {
-        let base;
-        try {
-          base = new URL(baseUrl);
-          if (!base.origin || base.origin === "null") {
-            return false; // non-HTTP url
-          }
-        } catch {
-          return false;
+        const base = URL.parse(baseUrl);
+        if (!base?.origin || base.origin === "null") {
+          return false; // non-HTTP url
         }
         const other = new URL(otherUrl, base);
         return base.origin === other.origin;
@@ -2221,7 +2232,7 @@ class PDFWorker {
       if (
         typeof PDFJSDev !== "undefined" &&
         PDFJSDev.test("GENERIC") &&
-        !PDFWorker._isSameOrigin(window.location.href, workerSrc)
+        !PDFWorker._isSameOrigin(window.location, workerSrc)
       ) {
         workerSrc = PDFWorker._createCDNWrapper(
           new URL(workerSrc, window.location).href
@@ -2354,6 +2365,7 @@ class PDFWorker {
 
   /**
    * @param {PDFWorkerParameters} params - The worker initialization parameters.
+   * @returns {PDFWorker}
    */
   static fromPort(params) {
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
@@ -2803,8 +2815,6 @@ class WorkerTransport {
 
       switch (type) {
         case "Font":
-          const { disableFontFace, fontExtraProperties, pdfBug } = this._params;
-
           if ("error" in exportedData) {
             const exportedError = exportedData.error;
             warn(`Error during font loading: ${exportedError}`);
@@ -2813,20 +2823,16 @@ class WorkerTransport {
           }
 
           const inspectFont =
-            pdfBug && globalThis.FontInspector?.enabled
+            this._params.pdfBug && globalThis.FontInspector?.enabled
               ? (font, url) => globalThis.FontInspector.fontAdded(font, url)
               : null;
-          const font = new FontFaceObject(exportedData, {
-            disableFontFace,
-            fontExtraProperties,
-            inspectFont,
-          });
+          const font = new FontFaceObject(exportedData, inspectFont);
 
           this.fontLoader
             .bind(font)
             .catch(() => messageHandler.sendWithPromise("FontFallback", { id }))
             .finally(() => {
-              if (!fontExtraProperties && font.data) {
+              if (!font.fontExtraProperties && font.data) {
                 // Immediately release the `font.data` property once the font
                 // has been attached to the DOM, since it's no longer needed,
                 // rather than waiting for a `PDFDocumentProxy.cleanup` call.
@@ -2884,13 +2890,6 @@ class WorkerTransport {
 
       switch (type) {
         case "Image":
-          pageProxy.objs.resolve(id, imageData);
-
-          // Heuristic that will allow us not to store large data.
-          if (imageData?.dataLen > MAX_IMAGE_SIZE_TO_CACHE) {
-            pageProxy._maybeCleanupAfterRender = true;
-          }
-          break;
         case "Pattern":
           pageProxy.objs.resolve(id, imageData);
           break;
@@ -2909,49 +2908,21 @@ class WorkerTransport {
       });
     });
 
-    messageHandler.on("FetchBuiltInCMap", async data => {
+    messageHandler.on("FetchBinaryData", async data => {
       if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Not implemented: FetchBuiltInCMap");
+        throw new Error("Not implemented: FetchBinaryData");
       }
       if (this.destroyed) {
         throw new Error("Worker was destroyed.");
       }
-      if (!this.cMapReaderFactory) {
-        throw new Error(
-          "CMapReaderFactory not initialized, see the `useWorkerFetch` parameter."
-        );
-      }
-      return this.cMapReaderFactory.fetch(data);
-    });
+      const factory = this[data.type];
 
-    messageHandler.on("FetchStandardFontData", async data => {
-      if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Not implemented: FetchStandardFontData");
-      }
-      if (this.destroyed) {
-        throw new Error("Worker was destroyed.");
-      }
-      if (!this.standardFontDataFactory) {
+      if (!factory) {
         throw new Error(
-          "StandardFontDataFactory not initialized, see the `useWorkerFetch` parameter."
+          `${data.type} not initialized, see the \`useWorkerFetch\` parameter.`
         );
       }
-      return this.standardFontDataFactory.fetch(data);
-    });
-
-    messageHandler.on("FetchWasm", async data => {
-      if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Not implemented: FetchWasm");
-      }
-      if (this.destroyed) {
-        throw new Error("Worker was destroyed.");
-      }
-      if (!this.wasmFactory) {
-        throw new Error(
-          "WasmFactory not initialized, see the `useWorkerFetch` parameter."
-        );
-      }
-      return this.wasmFactory.fetch(data);
+      return factory.fetch(data);
     });
   }
 
@@ -3289,16 +3260,26 @@ class PDFObjects {
 class RenderTask {
   #internalRenderTask = null;
 
+  /**
+   * Callback for incremental rendering -- a function that will be called
+   * each time the rendering is paused.  To continue rendering call the
+   * function that is the first argument to the callback.
+   * @type {function}
+   */
+  onContinue = null;
+
+  /**
+   * A function that will be synchronously called when the rendering tasks
+   * finishes with an error (either because of an actual error, or because the
+   * rendering is cancelled).
+   *
+   * @type {function}
+   * @param {Error} error
+   */
+  onError = null;
+
   constructor(internalRenderTask) {
     this.#internalRenderTask = internalRenderTask;
-
-    /**
-     * Callback for incremental rendering -- a function that will be called
-     * each time the rendering is paused.  To continue rendering call the
-     * function that is the first argument to the callback.
-     * @type {function}
-     */
-    this.onContinue = null;
 
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
       // For testing purposes.
@@ -3456,13 +3437,13 @@ class InternalRenderTask {
     }
     InternalRenderTask.#canvasInUse.delete(this._canvas);
 
-    this.callback(
-      error ||
-        new RenderingCancelledException(
-          `Rendering cancelled, page ${this._pageIndex + 1}`,
-          extraDelay
-        )
+    error ||= new RenderingCancelledException(
+      `Rendering cancelled, page ${this._pageIndex + 1}`,
+      extraDelay
     );
+    this.callback(error);
+
+    this.task.onError?.(error);
   }
 
   operatorListChanged() {
@@ -3533,6 +3514,7 @@ const build =
 export {
   build,
   getDocument,
+  isValidExplicitDest,
   LoopbackPort,
   PDFDataRangeTransport,
   PDFDocumentLoadingTask,

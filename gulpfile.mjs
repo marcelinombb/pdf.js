@@ -80,7 +80,7 @@ const config = JSON.parse(fs.readFileSync(CONFIG_FILE).toString());
 
 const ENV_TARGETS = [
   "last 2 versions",
-  "Chrome >= 103",
+  "Chrome >= 110",
   "Firefox ESR",
   "Safari >= 16.4",
   "Node >= 20",
@@ -97,7 +97,7 @@ const AUTOPREFIXER_CONFIG = {
 const BABEL_TARGETS = ENV_TARGETS.join(", ");
 
 const BABEL_PRESET_ENV_OPTS = Object.freeze({
-  corejs: "3.40.0",
+  corejs: "3.41.0",
   exclude: ["web.structured-clone"],
   shippedProposals: true,
   useBuiltIns: "usage",
@@ -217,6 +217,7 @@ function createWebpackAlias(defines) {
     "web-preferences": "",
     "web-print_service": "",
     "web-secondary_toolbar": "web/secondary_toolbar.js",
+    "web-signature_manager": "web/signature_manager.js",
     "web-toolbar": "web/toolbar.js",
   };
 
@@ -386,6 +387,7 @@ function createWebpackConfig(
       parser: {
         javascript: {
           importMeta: false,
+          url: false,
         },
       },
       rules: [
@@ -634,13 +636,19 @@ function createCMapBundle() {
   });
 }
 
+function createICCBundle() {
+  return gulp.src(["external/iccs/*.icc", "external/iccs/LICENSE"], {
+    base: "external/iccs",
+    encoding: false,
+  });
+}
+
 function createStandardFontBundle() {
   return gulp.src(
     [
       "external/standard_fonts/*.pfb",
       "external/standard_fonts/*.ttf",
-      "external/standard_fonts/LICENSE_FOXIT",
-      "external/standard_fonts/LICENSE_LIBERATION",
+      "external/standard_fonts/LICENSE_*",
     ],
     {
       base: "external/standard_fonts",
@@ -651,8 +659,19 @@ function createStandardFontBundle() {
 
 function createWasmBundle() {
   return ordered([
-    gulp.src(["external/openjpeg/*.wasm"], {
-      base: "external/openjpeg",
+    gulp.src(
+      [
+        "external/openjpeg/*.wasm",
+        "external/openjpeg/openjpeg_nowasm_fallback.js",
+        "external/openjpeg/LICENSE_*",
+      ],
+      {
+        base: "external/openjpeg",
+        encoding: false,
+      }
+    ),
+    gulp.src(["external/qcms/*.wasm", "external/qcms/LICENSE_*"], {
+      base: "external/qcms",
       encoding: false,
     }),
   ]);
@@ -1079,6 +1098,7 @@ function buildGeneric(defines, dir) {
       })
       .pipe(gulp.dest(dir + "web")),
     createCMapBundle().pipe(gulp.dest(dir + "web/cmaps")),
+    createICCBundle().pipe(gulp.dest(dir + "web/iccs")),
     createStandardFontBundle().pipe(gulp.dest(dir + "web/standard_fonts")),
     createWasmBundle().pipe(gulp.dest(dir + "web/wasm")),
 
@@ -1408,6 +1428,7 @@ gulp.task(
         createCMapBundle().pipe(
           gulp.dest(MOZCENTRAL_CONTENT_DIR + "web/cmaps")
         ),
+        createICCBundle().pipe(gulp.dest(MOZCENTRAL_CONTENT_DIR + "web/iccs")),
         createStandardFontBundle().pipe(
           gulp.dest(MOZCENTRAL_CONTENT_DIR + "web/standard_fonts")
         ),
@@ -1424,6 +1445,7 @@ gulp.task(
           .pipe(
             postcss([
               discardCommentsCSS(),
+              postcssDarkThemeClass(),
               autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG),
             ])
           )
@@ -1434,6 +1456,7 @@ gulp.task(
           .pipe(
             postcss([
               discardCommentsCSS(),
+              postcssDarkThemeClass(),
               autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG),
             ])
           )
@@ -1510,6 +1533,9 @@ gulp.task(
           .pipe(gulp.dest(CHROME_BUILD_CONTENT_DIR + "web")),
         createCMapBundle().pipe(
           gulp.dest(CHROME_BUILD_CONTENT_DIR + "web/cmaps")
+        ),
+        createICCBundle().pipe(
+          gulp.dest(CHROME_BUILD_CONTENT_DIR + "web/iccs")
         ),
         createStandardFontBundle().pipe(
           gulp.dest(CHROME_BUILD_CONTENT_DIR + "web/standard_fonts")
@@ -1649,6 +1675,7 @@ function buildLib(defines, dir) {
     }),
     gulp.src("test/unit/*.js", { base: ".", encoding: false }),
     gulp.src("external/openjpeg/*.js", { base: "openjpeg/", encoding: false }),
+    gulp.src("external/qcms/*.js", { base: "qcms/", encoding: false }),
   ]);
 
   return buildLibHelper(bundleDefines, inputStream, dir);
@@ -1952,20 +1979,25 @@ function createBaseline(done) {
 
 gulp.task(
   "unittestcli",
-  gulp.series(setTestEnv, "lib-legacy", function runUnitTestCli(done) {
-    const options = [
-      "node_modules/jasmine/bin/jasmine",
-      "JASMINE_CONFIG_PATH=test/unit/clitests.json",
-    ];
-    const jasmineProcess = startNode(options, { stdio: "inherit" });
-    jasmineProcess.on("close", function (code) {
-      if (code !== 0) {
-        done(new Error("Unit tests failed."));
-        return;
-      }
-      done();
-    });
-  })
+  gulp.series(
+    setTestEnv,
+    "generic-legacy",
+    "lib-legacy",
+    function runUnitTestCli(done) {
+      const options = [
+        "node_modules/jasmine/bin/jasmine",
+        "JASMINE_CONFIG_PATH=test/unit/clitests.json",
+      ];
+      const jasmineProcess = startNode(options, { stdio: "inherit" });
+      jasmineProcess.on("close", function (code) {
+        if (code !== 0) {
+          done(new Error("Unit tests failed."));
+          return;
+        }
+        done();
+      });
+    }
+  )
 );
 
 gulp.task("lint", function (done) {
@@ -2125,7 +2157,7 @@ gulp.task(
     },
     function watchWasm() {
       gulp.watch(
-        "external/openjpeg/*",
+        ["external/openjpeg/*", "external/qcms/*"],
         { ignoreInitial: false },
         gulp.series("dev-wasm")
       );
@@ -2234,6 +2266,8 @@ gulp.task("metalsmith", async function () {
       .use(
         layouts({
           directory: "docs/templates",
+          pattern: "**",
+          transform: "nunjucks",
         })
       )
       .use(relative())
@@ -2285,7 +2319,7 @@ function packageJson() {
     bugs: DIST_BUGS_URL,
     license: DIST_LICENSE,
     optionalDependencies: {
-      "@napi-rs/canvas": "^0.1.65",
+      "@napi-rs/canvas": "^0.1.67",
     },
     browser: {
       canvas: false,
@@ -2345,7 +2379,19 @@ gulp.task(
           })
           .pipe(gulp.dest(DIST_DIR)),
         gulp
+          .src(GENERIC_DIR + "web/iccs/**/*", {
+            base: GENERIC_DIR + "web",
+            encoding: false,
+          })
+          .pipe(gulp.dest(DIST_DIR)),
+        gulp
           .src(GENERIC_DIR + "web/standard_fonts/**/*", {
+            base: GENERIC_DIR + "web",
+            encoding: false,
+          })
+          .pipe(gulp.dest(DIST_DIR)),
+        gulp
+          .src(GENERIC_DIR + "web/wasm/**/*", {
             base: GENERIC_DIR + "web",
             encoding: false,
           })

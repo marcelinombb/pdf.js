@@ -43,17 +43,6 @@ function bindEvents(obj, element, names) {
 }
 
 /**
- * Convert a number between 0 and 100 into an hex number between 0 and 255.
- * @param {number} opacity
- * @return {string}
- */
-function opacityToHex(opacity) {
-  return Math.round(Math.min(255, Math.max(1, 255 * opacity)))
-    .toString(16)
-    .padStart(2, "0");
-}
-
-/**
  * Class to create some unique ids for the different editors.
  */
 class IdManager {
@@ -664,6 +653,8 @@ class AnnotationEditorUIManager {
 
   #selectedTextNode = null;
 
+  #signatureManager = null;
+
   #pageColors = null;
 
   #showAllStates = null;
@@ -828,6 +819,7 @@ class AnnotationEditorUIManager {
     container,
     viewer,
     altTextManager,
+    signatureManager,
     eventBus,
     pdfDocument,
     pageColors,
@@ -843,6 +835,7 @@ class AnnotationEditorUIManager {
     this.#container = container;
     this.#viewer = viewer;
     this.#altTextManager = altTextManager;
+    this.#signatureManager = signatureManager;
     this._eventBus = eventBus;
     eventBus._on("editingaction", this.onEditingAction.bind(this), { signal });
     eventBus._on("pagechanging", this.onPageChanging.bind(this), { signal });
@@ -905,8 +898,11 @@ class AnnotationEditorUIManager {
     this.#selectedEditors.clear();
     this.#commandManager.destroy();
     this.#altTextManager?.destroy();
+    this.#signatureManager?.destroy();
     this.#highlightToolbar?.hide();
     this.#highlightToolbar = null;
+    this.#mainHighlightColorPicker?.destroy();
+    this.#mainHighlightColorPicker = null;
     if (this.#focusMainContainerTimeoutId) {
       clearTimeout(this.#focusMainContainerTimeoutId);
       this.#focusMainContainerTimeoutId = null;
@@ -999,6 +995,14 @@ class AnnotationEditorUIManager {
 
   editAltText(editor, firstTime = false) {
     this.#altTextManager?.editAltText(this, editor, firstTime);
+  }
+
+  getSignature(editor) {
+    this.#signatureManager?.getSignature({ uiManager: this, editor });
+  }
+
+  get signatureManager() {
+    return this.#signatureManager;
   }
 
   switchToMode(mode, callback) {
@@ -1687,6 +1691,9 @@ class AnnotationEditorUIManager {
       this.#updateModeCapability.resolve();
       return;
     }
+    if (mode === AnnotationEditorType.SIGNATURE) {
+      await this.#signatureManager?.loadSignatures();
+    }
     this.setEditingState(true);
     await this.#enableAll();
     this.unselectAll();
@@ -1712,10 +1719,6 @@ class AnnotationEditorUIManager {
     }
 
     this.#updateModeCapability.resolve();
-  }
-
-  isInEditingMode() {
-    return this.#mode !== AnnotationEditorType.NONE;
   }
 
   addNewEditorFromKeyboard() {
@@ -1751,7 +1754,7 @@ class AnnotationEditorUIManager {
 
     switch (type) {
       case AnnotationEditorParamsType.CREATE:
-        this.currentLayer.addNewEditor();
+        this.currentLayer.addNewEditor(value);
         return;
       case AnnotationEditorParamsType.HIGHLIGHT_DEFAULT_COLOR:
         this.#mainHighlightColorPicker?.updateColor(value);
@@ -2250,6 +2253,7 @@ class AnnotationEditorUIManager {
           for (const editor of editors) {
             if (this.#allEditors.has(editor.id)) {
               editor.translateInPage(totalX, totalY);
+              editor.translationDone();
             }
           }
         },
@@ -2257,6 +2261,7 @@ class AnnotationEditorUIManager {
           for (const editor of editors) {
             if (this.#allEditors.has(editor.id)) {
               editor.translateInPage(-totalX, -totalY);
+              editor.translationDone();
             }
           }
         },
@@ -2266,6 +2271,7 @@ class AnnotationEditorUIManager {
 
     for (const editor of editors) {
       editor.translateInPage(x, y);
+      editor.translationDone();
     }
   }
 
@@ -2545,5 +2551,4 @@ export {
   ColorManager,
   CommandManager,
   KeyboardManager,
-  opacityToHex,
 };

@@ -50,6 +50,7 @@ import {
   InvalidPDFException,
   isDataScheme,
   isPdfFile,
+  OutputScale,
   PDFWorker,
   ResponseException,
   shadow,
@@ -89,6 +90,7 @@ import { PDFThumbnailViewer } from "web-pdf_thumbnail_viewer";
 import { PDFViewer } from "./pdf_viewer.js";
 import { Preferences } from "web-preferences";
 import { SecondaryToolbar } from "web-secondary_toolbar";
+import { SignatureManager } from "web-signature_manager";
 import { Toolbar } from "web-toolbar";
 import { ViewHistory } from "./view_history.js";
 
@@ -201,39 +203,40 @@ const PDFViewerApplication = {
       await this._parseHashParams();
     }
 
-    if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
-      let mode;
-      switch (AppOptions.get("viewerCssTheme")) {
-        case 1:
-          mode = "is-light";
-          break;
-        case 2:
-          mode = "is-dark";
-          break;
+    let mode;
+    switch (AppOptions.get("viewerCssTheme")) {
+      case 1:
+        mode = "is-light";
+        break;
+      case 2:
+        mode = "is-dark";
+        break;
+    }
+    if (mode) {
+      document.documentElement.classList.add(mode);
+    }
+
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+      if (AppOptions.get("enableFakeMLManager")) {
+        this.mlManager =
+          MLManager.getFakeMLManager?.({
+            enableGuessAltText: AppOptions.get("enableGuessAltText"),
+            enableAltTextModelDownload: AppOptions.get(
+              "enableAltTextModelDownload"
+            ),
+          }) || null;
       }
-      if (mode) {
-        document.documentElement.classList.add(mode);
+    } else if (PDFJSDev.test("MOZCENTRAL")) {
+      if (AppOptions.get("enableAltText")) {
+        // We want to load the image-to-text AI engine as soon as possible.
+        this.mlManager = new MLManager({
+          enableGuessAltText: AppOptions.get("enableGuessAltText"),
+          enableAltTextModelDownload: AppOptions.get(
+            "enableAltTextModelDownload"
+          ),
+          altTextLearnMoreUrl: AppOptions.get("altTextLearnMoreUrl"),
+        });
       }
-      if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
-        if (AppOptions.get("enableFakeMLManager")) {
-          this.mlManager =
-            MLManager.getFakeMLManager?.({
-              enableGuessAltText: AppOptions.get("enableGuessAltText"),
-              enableAltTextModelDownload: AppOptions.get(
-                "enableAltTextModelDownload"
-              ),
-            }) || null;
-        }
-      }
-    } else if (AppOptions.get("enableAltText")) {
-      // We want to load the image-to-text AI engine as soon as possible.
-      this.mlManager = new MLManager({
-        enableGuessAltText: AppOptions.get("enableGuessAltText"),
-        enableAltTextModelDownload: AppOptions.get(
-          "enableAltTextModelDownload"
-        ),
-        altTextLearnMoreUrl: AppOptions.get("altTextLearnMoreUrl"),
-      });
     }
 
     // Ensure that the `L10n`-instance has been initialized before creating
@@ -352,7 +355,9 @@ const PDFViewerApplication = {
     // Set some specific preferences for tests.
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING")) {
       Object.assign(opts, {
+        docBaseUrl: x => x,
         enableAltText: x => x === "true",
+        enableAutoLinking: x => x === "true",
         enableFakeMLManager: x => x === "true",
         enableGuessAltText: x => x === "true",
         enableUpdatedAddImage: x => x === "true",
@@ -377,7 +382,8 @@ const PDFViewerApplication = {
    * @private
    */
   async _initializeViewerComponents() {
-    const { appConfig, externalServices, l10n } = this;
+    const { appConfig, externalServices, l10n, mlManager } = this;
+    const abortSignal = this._globalAbortController.signal;
 
     const eventBus =
       typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")
@@ -388,7 +394,7 @@ const PDFViewerApplication = {
           )
         : new EventBus();
     this.eventBus = AppOptions.eventBus = eventBus;
-    this.mlManager?.setEventBus(eventBus, this._globalAbortController.signal);
+    mlManager?.setEventBus(eventBus, abortSignal);
 
     this.overlayManager = new OverlayManager();
 
@@ -458,7 +464,23 @@ const PDFViewerApplication = {
       this.editorUndoBar = new EditorUndoBar(appConfig.editorUndoBar, eventBus);
     }
 
-    const enableHWA = AppOptions.get("enableHWA");
+    const signatureManager =
+      AppOptions.get("enableSignatureEditor") && appConfig.addSignatureDialog
+        ? new SignatureManager(
+            appConfig.addSignatureDialog,
+            appConfig.editSignatureDialog,
+            appConfig.annotationEditorParams?.editorSignatureAddSignature ||
+              null,
+            this.overlayManager,
+            l10n,
+            externalServices.createSignatureStorage(eventBus, abortSignal),
+            eventBus
+          )
+        : null;
+
+    const enableHWA = AppOptions.get("enableHWA"),
+      maxCanvasPixels = AppOptions.get("maxCanvasPixels"),
+      maxCanvasDim = AppOptions.get("maxCanvasDim");
     const pdfViewer = new PDFViewer({
       container,
       viewer,
@@ -467,6 +489,7 @@ const PDFViewerApplication = {
       linkService: pdfLinkService,
       downloadManager,
       altTextManager,
+      signatureManager,
       editorUndoBar: this.editorUndoBar,
       findController,
       scriptingManager:
@@ -485,13 +508,16 @@ const PDFViewerApplication = {
       ),
       imageResourcesPath: AppOptions.get("imageResourcesPath"),
       enablePrintAutoRotate: AppOptions.get("enablePrintAutoRotate"),
-      maxCanvasPixels: AppOptions.get("maxCanvasPixels"),
+      maxCanvasPixels,
+      maxCanvasDim,
+      enableDetailCanvas: AppOptions.get("enableDetailCanvas"),
       enablePermissions: AppOptions.get("enablePermissions"),
       pageColors,
-      mlManager: this.mlManager,
-      abortSignal: this._globalAbortController.signal,
+      mlManager,
+      abortSignal,
       enableHWA,
       supportsPinchToZoom: this.supportsPinchToZoom,
+      enableAutoLinking: AppOptions.get("enableAutoLinking"),
     });
     this.pdfViewer = pdfViewer;
 
@@ -505,8 +531,10 @@ const PDFViewerApplication = {
         eventBus,
         renderingQueue: pdfRenderingQueue,
         linkService: pdfLinkService,
+        maxCanvasPixels,
+        maxCanvasDim,
         pageColors,
-        abortSignal: this._globalAbortController.signal,
+        abortSignal,
         enableHWA,
       });
       pdfRenderingQueue.setThumbnailViewer(this.pdfThumbnailViewer);
@@ -536,6 +564,10 @@ const PDFViewerApplication = {
           typeof AbortSignal.any === "function") &&
         annotationEditorMode !== AnnotationEditorType.DISABLE
       ) {
+        const editorSignatureButton = appConfig.toolbar?.editorSignatureButton;
+        if (editorSignatureButton && AppOptions.get("enableSignatureEditor")) {
+          editorSignatureButton.parentElement.hidden = false;
+        }
         this.annotationEditorParams = new AnnotationEditorParams(
           appConfig.annotationEditorParams,
           eventBus
@@ -547,15 +579,12 @@ const PDFViewerApplication = {
       }
     }
 
-    if (
-      this.mlManager &&
-      appConfig.secondaryToolbar?.imageAltTextSettingsButton
-    ) {
+    if (mlManager && appConfig.secondaryToolbar?.imageAltTextSettingsButton) {
       this.imageAltTextSettings = new ImageAltTextSettings(
         appConfig.altTextSettingsDialog,
         this.overlayManager,
         eventBus,
-        this.mlManager
+        mlManager
       );
     }
 
@@ -1124,7 +1153,9 @@ const PDFViewerApplication = {
   async download() {
     let data;
     try {
-      data = await this.pdfDocument.getData();
+      data = await (this.pdfDocument
+        ? this.pdfDocument.getData()
+        : this.pdfLoadingTask.getData());
     } catch {
       // When the PDF document isn't ready, simply download using the URL.
     }
@@ -2063,7 +2094,7 @@ const PDFViewerApplication = {
         pdfViewer.refresh();
       }
       const mediaQueryList = window.matchMedia(
-        `(resolution: ${window.devicePixelRatio || 1}dppx)`
+        `(resolution: ${OutputScale.pixelRatio}dppx)`
       );
       mediaQueryList.addEventListener("change", addWindowResolutionChange, {
         once: true,
@@ -2248,35 +2279,34 @@ if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
 }
 
 if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
-  const HOSTED_VIEWER_ORIGINS = [
+  const HOSTED_VIEWER_ORIGINS = new Set([
     "null",
     "http://mozilla.github.io",
     "https://mozilla.github.io",
-  ];
+  ]);
   // eslint-disable-next-line no-var
   var validateFileURL = function (file) {
     if (!file) {
       return;
     }
-    try {
-      const viewerOrigin = new URL(window.location.href).origin || "null";
-      if (HOSTED_VIEWER_ORIGINS.includes(viewerOrigin)) {
-        // Hosted or local viewer, allow for any file locations
-        return;
-      }
-      const fileOrigin = new URL(file, window.location.href).origin;
-      // Removing of the following line will not guarantee that the viewer will
-      // start accepting URLs from foreign origin -- CORS headers on the remote
-      // server must be properly configured.
-      if (fileOrigin !== viewerOrigin) {
-        throw new Error("file origin does not match viewer's");
-      }
-    } catch (ex) {
-      PDFViewerApplication._documentError("pdfjs-loading-error", {
-        message: ex.message,
-      });
-      throw ex;
+    const viewerOrigin = URL.parse(window.location)?.origin || "null";
+    if (HOSTED_VIEWER_ORIGINS.has(viewerOrigin)) {
+      // Hosted or local viewer, allow for any file locations
+      return;
     }
+    const fileOrigin = URL.parse(file, window.location)?.origin;
+    if (fileOrigin === viewerOrigin) {
+      return;
+    }
+    const ex = new Error("file origin does not match viewer's");
+
+    PDFViewerApplication._documentError("pdfjs-loading-error", {
+      message: ex.message,
+    });
+    // Removing of the following line will not guarantee that the viewer will
+    // start accepting URLs from foreign origin -- CORS headers on the remote
+    // server must be properly configured.
+    throw ex;
   };
 
   // eslint-disable-next-line no-var
@@ -2306,7 +2336,7 @@ function onPageRender({ pageNumber }) {
   }
 }
 
-function onPageRendered({ pageNumber, error }) {
+function onPageRendered({ pageNumber, isDetailView, error }) {
   // If the page is still visible when it has finished rendering,
   // ensure that the page number input loading indicator is hidden.
   if (pageNumber === this.page) {
@@ -2314,7 +2344,7 @@ function onPageRendered({ pageNumber, error }) {
   }
 
   // Use the rendered page to set the corresponding thumbnail image.
-  if (this.pdfSidebar?.visibleView === SidebarView.THUMBS) {
+  if (!isDetailView && this.pdfSidebar?.visibleView === SidebarView.THUMBS) {
     const pageView = this.pdfViewer.getPageView(/* index = */ pageNumber - 1);
     const thumbnailView = this.pdfThumbnailViewer?.getThumbnail(
       /* index = */ pageNumber - 1
@@ -2656,18 +2686,19 @@ function onWheel(evt) {
   }
 }
 
-function closeSecondaryToolbar(evt) {
+function closeSecondaryToolbar({ target }) {
   if (!this.secondaryToolbar?.isOpen) {
     return;
   }
-  const appConfig = this.appConfig;
+  const { toolbar, secondaryToolbar } = this.appConfig;
   if (
-    this.pdfViewer.containsElement(evt.target) ||
-    (appConfig.toolbar?.container.contains(evt.target) &&
+    this.pdfViewer.containsElement(target) ||
+    (toolbar?.container.contains(target) &&
+      !secondaryToolbar?.toolbar.contains(target) &&
       // TODO: change the `contains` for an equality check when the bug:
       //  https://bugzilla.mozilla.org/show_bug.cgi?id=1921984
       // is fixed.
-      !appConfig.secondaryToolbar?.toggleButton.contains(evt.target))
+      !secondaryToolbar?.toggleButton.contains(target))
   ) {
     this.secondaryToolbar.close();
   }

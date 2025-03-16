@@ -60,7 +60,7 @@ import {
 } from "./primitives.js";
 import { getXfaFontDict, getXfaFontName } from "./xfa_fonts.js";
 import { BaseStream } from "./base_stream.js";
-import { calculateMD5 } from "./crypto.js";
+import { calculateMD5 } from "./calculate_md5.js";
 import { Catalog } from "./catalog.js";
 import { clearGlobalCaches } from "./cleanup_helper.js";
 import { DatasetReader } from "./dataset_reader.js";
@@ -87,6 +87,7 @@ class Page {
     fontCache,
     builtInCMapCache,
     standardFontDataCache,
+    globalColorSpaceCache,
     globalImageCache,
     systemFontCache,
     nonBlendModesSet,
@@ -100,6 +101,7 @@ class Page {
     this.fontCache = fontCache;
     this.builtInCMapCache = builtInCMapCache;
     this.standardFontDataCache = standardFontDataCache;
+    this.globalColorSpaceCache = globalColorSpaceCache;
     this.globalImageCache = globalImageCache;
     this.systemFontCache = systemFontCache;
     this.nonBlendModesSet = nonBlendModesSet;
@@ -327,6 +329,7 @@ class Page {
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
       standardFontDataCache: this.standardFontDataCache,
+      globalColorSpaceCache: this.globalColorSpaceCache,
       globalImageCache: this.globalImageCache,
       systemFontCache: this.systemFontCache,
       options: this.evaluatorOptions,
@@ -381,6 +384,7 @@ class Page {
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
       standardFontDataCache: this.standardFontDataCache,
+      globalColorSpaceCache: this.globalColorSpaceCache,
       globalImageCache: this.globalImageCache,
       systemFontCache: this.systemFontCache,
       options: this.evaluatorOptions,
@@ -446,6 +450,7 @@ class Page {
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
       standardFontDataCache: this.standardFontDataCache,
+      globalColorSpaceCache: this.globalColorSpaceCache,
       globalImageCache: this.globalImageCache,
       systemFontCache: this.systemFontCache,
       options: this.evaluatorOptions,
@@ -541,9 +546,7 @@ class Page {
           resources: this.resources,
           operatorList: opList,
         })
-        .then(function () {
-          return opList;
-        });
+        .then(() => opList);
     });
 
     // Fetch the page's annotations and add their operator lists to the
@@ -670,6 +673,7 @@ class Page {
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
       standardFontDataCache: this.standardFontDataCache,
+      globalColorSpaceCache: this.globalColorSpaceCache,
       globalImageCache: this.globalImageCache,
       systemFontCache: this.systemFontCache,
       options: this.evaluatorOptions,
@@ -742,6 +746,7 @@ class Page {
           fontCache: this.fontCache,
           builtInCMapCache: this.builtInCMapCache,
           standardFontDataCache: this.standardFontDataCache,
+          globalColorSpaceCache: this.globalColorSpaceCache,
           globalImageCache: this.globalImageCache,
           systemFontCache: this.systemFontCache,
           options: this.evaluatorOptions,
@@ -1620,24 +1625,25 @@ class PDFDocument {
     } else {
       promise = catalog.getPageDict(pageIndex);
     }
-    // eslint-disable-next-line arrow-body-style
-    promise = promise.then(([pageDict, ref]) => {
-      return new Page({
-        pdfManager: this.pdfManager,
-        xref: this.xref,
-        pageIndex,
-        pageDict,
-        ref,
-        globalIdFactory: this._globalIdFactory,
-        fontCache: catalog.fontCache,
-        builtInCMapCache: catalog.builtInCMapCache,
-        standardFontDataCache: catalog.standardFontDataCache,
-        globalImageCache: catalog.globalImageCache,
-        systemFontCache: catalog.systemFontCache,
-        nonBlendModesSet: catalog.nonBlendModesSet,
-        xfaFactory,
-      });
-    });
+    promise = promise.then(
+      ([pageDict, ref]) =>
+        new Page({
+          pdfManager: this.pdfManager,
+          xref: this.xref,
+          pageIndex,
+          pageDict,
+          ref,
+          globalIdFactory: this._globalIdFactory,
+          fontCache: catalog.fontCache,
+          builtInCMapCache: catalog.builtInCMapCache,
+          standardFontDataCache: catalog.standardFontDataCache,
+          globalColorSpaceCache: catalog.globalColorSpaceCache,
+          globalImageCache: catalog.globalImageCache,
+          systemFontCache: catalog.systemFontCache,
+          nonBlendModesSet: catalog.nonBlendModesSet,
+          xfaFactory,
+        })
+    );
 
     this._pagePromises.set(pageIndex, promise);
     return promise;
@@ -1731,6 +1737,7 @@ class PDFDocument {
               fontCache: catalog.fontCache,
               builtInCMapCache: catalog.builtInCMapCache,
               standardFontDataCache: catalog.standardFontDataCache,
+              globalColorSpaceCache: this.globalColorSpaceCache,
               globalImageCache: catalog.globalImageCache,
               systemFontCache: catalog.systemFontCache,
               nonBlendModesSet: catalog.nonBlendModesSet,
@@ -1745,8 +1752,15 @@ class PDFDocument {
     }
   }
 
-  fontFallback(id, handler) {
-    return this.catalog.fontFallback(id, handler);
+  async fontFallback(id, handler) {
+    const { catalog, pdfManager } = this;
+
+    for (const translatedFont of await Promise.all(catalog.fontCache)) {
+      if (translatedFont.loadedName === id) {
+        translatedFont.fallback(handler, pdfManager.evaluatorOptions);
+        return;
+      }
+    }
   }
 
   async cleanup(manuallyTriggered = false) {

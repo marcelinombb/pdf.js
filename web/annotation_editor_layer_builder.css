@@ -15,6 +15,7 @@
 
 @import url(draw_layer_builder.css);
 @import url(toggle_button.css);
+@import url(signature_manager.css);
 
 :root {
   --outline-width: 2px;
@@ -40,12 +41,10 @@
   );
   --editorFreeText-editing-cursor: text;
   --editorInk-editing-cursor: url(images/cursor-editorInk.svg) 0 16, pointer;
-  --editorHighlight-editing-cursor: url(images/cursor-editorTextHighlight.svg)
-      24 24,
-    text;
-  --editorFreeHighlight-editing-cursor: url(images/cursor-editorFreeHighlight.svg)
-      1 18,
-    pointer;
+  --editorHighlight-editing-cursor:
+    url(images/cursor-editorTextHighlight.svg) 24 24, text;
+  --editorFreeHighlight-editing-cursor:
+    url(images/cursor-editorFreeHighlight.svg) 1 18, pointer;
 
   --new-alt-text-warning-image: url(images/altText_warning.svg);
 }
@@ -93,8 +92,8 @@
 
 @media (min-resolution: 1.1dppx) {
   :root {
-    --editorFreeText-editing-cursor: url(images/cursor-editorFreeText.svg) 0 16,
-      text;
+    --editorFreeText-editing-cursor:
+      url(images/cursor-editorFreeText.svg) 0 16, text;
   }
 }
 
@@ -124,7 +123,7 @@
   background: transparent;
   position: absolute;
   inset: 0;
-  font-size: calc(100px * var(--scale-factor));
+  font-size: calc(100px * var(--total-scale-factor));
   transform-origin: 0 0;
   cursor: auto;
 
@@ -163,7 +162,8 @@
 }
 
 .annotationEditorLayer
-  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor) {
+ 
+  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor, .signatureEditor) {
   position: absolute;
   background: transparent;
   z-index: 1;
@@ -221,7 +221,13 @@
 }
 
 .annotationEditorLayer
-  :is(.freeTextEditor, .inkEditor, .stampEditor, .highlightEditor, .rectEditor),
+  :is(
+    .freeTextEditor,
+    .inkEditor,
+    .stampEditor,
+    .highlightEditor, .rectEditor,
+    .signatureEditor
+  ),
 .textLayer {
   .editToolbar {
     --editor-toolbar-delete-image: url(images/editor-toolbar-delete.svg);
@@ -507,7 +513,7 @@
 }
 
 .annotationEditorLayer .freeTextEditor {
-  padding: calc(var(--freetext-padding) * var(--scale-factor));
+  padding: calc(var(--freetext-padding) * var(--total-scale-factor));
   width: auto;
   height: auto;
   touch-action: none;
@@ -640,7 +646,7 @@
 }
 
 .annotationEditorLayer {
-  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor) {
+  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor, .signatureEditor) {
     & > .resizers {
       position: absolute;
       inset: 0;
