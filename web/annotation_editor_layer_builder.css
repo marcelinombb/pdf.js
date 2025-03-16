@@ -162,8 +162,13 @@
 }
 
 .annotationEditorLayer
- 
-  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor, .signatureEditor) {
+  :is(
+    .freeTextEditor,
+    .inkEditor,
+    .stampEditor,
+    .rectEditor,
+    .signatureEditor
+  ) {
   position: absolute;
   background: transparent;
   z-index: 1;
@@ -225,7 +230,8 @@
     .freeTextEditor,
     .inkEditor,
     .stampEditor,
-    .highlightEditor, .rectEditor,
+    .highlightEditor,
+    .rectEditor,
     .signatureEditor
   ),
 .textLayer {
@@ -646,7 +652,13 @@
 }
 
 .annotationEditorLayer {
-  :is(.freeTextEditor, .inkEditor, .stampEditor, .rectEditor, .signatureEditor) {
+  :is(
+    .freeTextEditor,
+    .inkEditor,
+    .stampEditor,
+    .rectEditor,
+    .signatureEditor
+  ) {
     & > .resizers {
       position: absolute;
       inset: 0;
