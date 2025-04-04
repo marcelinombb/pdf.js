@@ -286,7 +286,7 @@ const PDFViewerApplication = {
       const { PDFBug } =
         typeof PDFJSDev === "undefined"
           ? await import(AppOptions.get("debuggerSrc")) // eslint-disable-line no-unsanitized/method
-          : await __non_webpack_import__(AppOptions.get("debuggerSrc"));
+          : await __raw_import__(AppOptions.get("debuggerSrc"));
 
       this._PDFBug = PDFBug;
     };
@@ -299,7 +299,7 @@ const PDFViewerApplication = {
         if (typeof PDFJSDev === "undefined") {
           globalThis.pdfjsWorker = await import("pdfjs/pdf.worker.js");
         } else {
-          await __non_webpack_import__(PDFWorker.workerSrc);
+          await __raw_import__(PDFWorker.workerSrc);
         }
       } catch (ex) {
         console.error("_parseHashParams:", ex);
@@ -396,38 +396,35 @@ const PDFViewerApplication = {
     this.eventBus = AppOptions.eventBus = eventBus;
     mlManager?.setEventBus(eventBus, abortSignal);
 
-    this.overlayManager = new OverlayManager();
+    const overlayManager = (this.overlayManager = new OverlayManager());
 
-    const pdfRenderingQueue = new PDFRenderingQueue();
-    pdfRenderingQueue.onIdle = this._cleanup.bind(this);
-    this.pdfRenderingQueue = pdfRenderingQueue;
+    const renderingQueue = (this.pdfRenderingQueue = new PDFRenderingQueue());
+    renderingQueue.onIdle = this._cleanup.bind(this);
 
-    const pdfLinkService = new PDFLinkService({
+    const linkService = (this.pdfLinkService = new PDFLinkService({
       eventBus,
       externalLinkTarget: AppOptions.get("externalLinkTarget"),
       externalLinkRel: AppOptions.get("externalLinkRel"),
       ignoreDestinationZoom: AppOptions.get("ignoreDestinationZoom"),
-    });
-    this.pdfLinkService = pdfLinkService;
+    }));
 
     const downloadManager = (this.downloadManager = new DownloadManager());
 
-    const findController = new PDFFindController({
-      linkService: pdfLinkService,
+    const findController = (this.findController = new PDFFindController({
+      linkService,
       eventBus,
       updateMatchesCountOnProgress:
         typeof PDFJSDev === "undefined"
           ? !window.isGECKOVIEW
           : !PDFJSDev.test("GECKOVIEW"),
-    });
-    this.findController = findController;
+    }));
 
-    const pdfScriptingManager = new PDFScriptingManager({
-      eventBus,
-      externalServices,
-      docProperties: this._scriptingDocProperties.bind(this),
-    });
-    this.pdfScriptingManager = pdfScriptingManager;
+    const pdfScriptingManager = (this.pdfScriptingManager =
+      new PDFScriptingManager({
+        eventBus,
+        externalServices,
+        docProperties: this._scriptingDocProperties.bind(this),
+      }));
 
     const container = appConfig.mainContainer,
       viewer = appConfig.viewerContainer;
@@ -440,12 +437,13 @@ const PDFViewerApplication = {
             foreground: AppOptions.get("pageColorsForeground"),
           }
         : null;
+
     let altTextManager;
     if (AppOptions.get("enableUpdatedAddImage")) {
       altTextManager = appConfig.newAltTextDialog
         ? new NewAltTextManager(
             appConfig.newAltTextDialog,
-            this.overlayManager,
+            overlayManager,
             eventBus
           )
         : null;
@@ -454,7 +452,7 @@ const PDFViewerApplication = {
         ? new AltTextManager(
             appConfig.altTextDialog,
             container,
-            this.overlayManager,
+            overlayManager,
             eventBus
           )
         : null;
@@ -471,7 +469,7 @@ const PDFViewerApplication = {
             appConfig.editSignatureDialog,
             appConfig.annotationEditorParams?.editorSignatureAddSignature ||
               null,
-            this.overlayManager,
+            overlayManager,
             l10n,
             externalServices.createSignatureStorage(eventBus, abortSignal),
             eventBus
@@ -481,12 +479,12 @@ const PDFViewerApplication = {
     const enableHWA = AppOptions.get("enableHWA"),
       maxCanvasPixels = AppOptions.get("maxCanvasPixels"),
       maxCanvasDim = AppOptions.get("maxCanvasDim");
-    const pdfViewer = new PDFViewer({
+    const pdfViewer = (this.pdfViewer = new PDFViewer({
       container,
       viewer,
       eventBus,
-      renderingQueue: pdfRenderingQueue,
-      linkService: pdfLinkService,
+      renderingQueue,
+      linkService,
       downloadManager,
       altTextManager,
       signatureManager,
@@ -518,36 +516,35 @@ const PDFViewerApplication = {
       enableHWA,
       supportsPinchToZoom: this.supportsPinchToZoom,
       enableAutoLinking: AppOptions.get("enableAutoLinking"),
-    });
-    this.pdfViewer = pdfViewer;
+    }));
 
-    pdfRenderingQueue.setViewer(pdfViewer);
-    pdfLinkService.setViewer(pdfViewer);
+    renderingQueue.setViewer(pdfViewer);
+    linkService.setViewer(pdfViewer);
     pdfScriptingManager.setViewer(pdfViewer);
 
     if (appConfig.sidebar?.thumbnailView) {
       this.pdfThumbnailViewer = new PDFThumbnailViewer({
         container: appConfig.sidebar.thumbnailView,
         eventBus,
-        renderingQueue: pdfRenderingQueue,
-        linkService: pdfLinkService,
+        renderingQueue,
+        linkService,
         maxCanvasPixels,
         maxCanvasDim,
         pageColors,
         abortSignal,
         enableHWA,
       });
-      pdfRenderingQueue.setThumbnailViewer(this.pdfThumbnailViewer);
+      renderingQueue.setThumbnailViewer(this.pdfThumbnailViewer);
     }
 
     // The browsing history is only enabled when the viewer is standalone,
     // i.e. not when it is embedded in a web page.
     if (!this.isViewerEmbedded && !AppOptions.get("disableHistory")) {
       this.pdfHistory = new PDFHistory({
-        linkService: pdfLinkService,
+        linkService,
         eventBus,
       });
-      pdfLinkService.setHistory(this.pdfHistory);
+      linkService.setHistory(this.pdfHistory);
     }
 
     if (!this.supportsIntegratedFind && appConfig.findBar) {
@@ -559,11 +556,7 @@ const PDFViewerApplication = {
     }
 
     if (appConfig.annotationEditorParams) {
-      if (
-        ((typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-          typeof AbortSignal.any === "function") &&
-        annotationEditorMode !== AnnotationEditorType.DISABLE
-      ) {
+      if (annotationEditorMode !== AnnotationEditorType.DISABLE) {
         const editorSignatureButton = appConfig.toolbar?.editorSignatureButton;
         if (editorSignatureButton && AppOptions.get("enableSignatureEditor")) {
           editorSignatureButton.parentElement.hidden = false;
@@ -582,7 +575,7 @@ const PDFViewerApplication = {
     if (mlManager && appConfig.secondaryToolbar?.imageAltTextSettingsButton) {
       this.imageAltTextSettings = new ImageAltTextSettings(
         appConfig.altTextSettingsDialog,
-        this.overlayManager,
+        overlayManager,
         eventBus,
         mlManager
       );
@@ -591,7 +584,7 @@ const PDFViewerApplication = {
     if (appConfig.documentProperties) {
       this.pdfDocumentProperties = new PDFDocumentProperties(
         appConfig.documentProperties,
-        this.overlayManager,
+        overlayManager,
         eventBus,
         l10n,
         /* fileNameLookup = */ () => this._docFilename
@@ -657,7 +650,7 @@ const PDFViewerApplication = {
     if (appConfig.passwordOverlay) {
       this.passwordPrompt = new PasswordPrompt(
         appConfig.passwordOverlay,
-        this.overlayManager,
+        overlayManager,
         this.isViewerEmbedded
       );
     }
@@ -667,7 +660,7 @@ const PDFViewerApplication = {
         container: appConfig.sidebar.outlineView,
         eventBus,
         l10n,
-        linkService: pdfLinkService,
+        linkService,
         downloadManager,
       });
     }
@@ -2075,19 +2068,14 @@ const PDFViewerApplication = {
       _windowAbortController: { signal },
     } = this;
 
-    if (
-      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-      typeof AbortSignal.any === "function"
-    ) {
-      this._touchManager = new TouchManager({
-        container: window,
-        isPinchingDisabled: () => pdfViewer.isInPresentationMode,
-        isPinchingStopped: () => this.overlayManager?.active,
-        onPinching: this.touchPinchCallback.bind(this),
-        onPinchEnd: this.touchPinchEndCallback.bind(this),
-        signal,
-      });
-    }
+    this._touchManager = new TouchManager({
+      container: window,
+      isPinchingDisabled: () => pdfViewer.isInPresentationMode,
+      isPinchingStopped: () => this.overlayManager?.active,
+      onPinching: this.touchPinchCallback.bind(this),
+      onPinchEnd: this.touchPinchEndCallback.bind(this),
+      signal,
+    });
 
     function addWindowResolutionChange(evt = null) {
       if (evt) {

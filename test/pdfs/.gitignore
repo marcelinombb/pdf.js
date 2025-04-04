@@ -190,6 +190,7 @@
 !issue4706.pdf
 !rotation.pdf
 !simpletype3font.pdf
+!Type3WordSpacing.pdf
 !sizes.pdf
 !javauninstall-7r.pdf
 !file_url_link.pdf
@@ -260,6 +261,7 @@
 !bug860632.pdf
 !bug894572.pdf
 !bug911034.pdf
+!issue19695.pdf
 !bug1108301.pdf
 !issue10301.pdf
 !bug1157493.pdf
@@ -713,3 +715,6 @@
 !colors.pdf
 !red_stamp.pdf
 !issue19633.pdf
+!issue19424.pdf
+!issue18529.pdf
+!issue16742.pdf

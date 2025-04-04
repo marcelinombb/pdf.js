@@ -707,6 +707,13 @@
     "type": "load"
   },
   {
+    "id": "issue19695",
+    "file": "pdfs/issue19695.pdf",
+    "md5": "963474b8847afc9eeda4ff4635f7a523",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
     "id": "openofficearabiccidtruetype-pdf",
     "file": "pdfs/arial_unicode_ab_cidfont.pdf",
     "md5": "35090fa7d29e7196ae3421812e554988",
@@ -2828,6 +2835,23 @@
     "type": "eq"
   },
   {
+    "id": "bug810214",
+    "file": "pdfs/bug810214.pdf",
+    "md5": "2b7243178f5dd5fd3edc7b6649e4bdf3",
+    "link": true,
+    "rounds": 1,
+    "lastPage": 1,
+    "type": "eq"
+  },
+  {
+    "id": "Type3WordSpacing",
+    "file": "pdfs/Type3WordSpacing.pdf",
+    "md5": "8c75440e5b95cf521d186f862b404516",
+    "link": false,
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
     "id": "issue13372",
     "file": "pdfs/issue13372.pdf",
     "md5": "0bc5329623fd554174c5e7653f904e28",
@@ -2959,6 +2983,15 @@
     "link": false,
     "rounds": 1,
     "type": "eq"
+  },
+  {
+    "id": "cmykjpeg_nowasm",
+    "file": "pdfs/cmykjpeg.pdf",
+    "md5": "85d162b48ce98503a382d96f574f70a2",
+    "link": false,
+    "rounds": 1,
+    "type": "eq",
+    "useWasm": false
   },
   {
     "id": "issue4402_reduced",
@@ -5805,8 +5838,7 @@
     "file": "pdfs/issue16287.pdf",
     "md5": "cd3e0859140465ae8b8bde0c95cb4929",
     "rounds": 1,
-    "type": "eq",
-    "about": "Please note that this file currently renders incorrectly."
+    "type": "eq"
   },
   {
     "id": "issue2006",
@@ -11984,6 +12016,30 @@
     "id": "issue19633",
     "file": "pdfs/issue19633.pdf",
     "md5": "9993aa298c0214a3d3ff5f90ce0d40bb",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
+    "id": "bug1946953",
+    "file": "pdfs/bug1946953.pdf",
+    "md5": "a71fb64e348b9c7161945e48e75c6681",
+    "rounds": 1,
+    "link": true,
+    "firstPage": 1,
+    "lastPage": 1,
+    "type": "eq"
+  },
+  {
+    "id": "issue18529",
+    "file": "pdfs/issue18529.pdf",
+    "md5": "f95d2cbdd904f5acf922e088cc3cb153",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
+    "id": "issue16742",
+    "file": "pdfs/issue16742.pdf",
+    "md5": "98b19e944339c01c10c503685eee3ad2",
     "rounds": 1,
     "type": "eq"
   }

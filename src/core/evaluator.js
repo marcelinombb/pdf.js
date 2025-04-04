@@ -16,6 +16,7 @@
 import {
   AbortException,
   assert,
+  DrawOPS,
   FONT_IDENTITY_MATRIX,
   FormatError,
   IDENTITY_MATRIX,
@@ -31,6 +32,7 @@ import {
 } from "../shared/util.js";
 import { CMapFactory, IdentityCMap } from "./cmap.js";
 import { Cmd, Dict, EOF, isName, Name, Ref, RefSet } from "./primitives.js";
+import { compileType3Glyph, FontFlags } from "./fonts_utils.js";
 import { ErrorFont, Font } from "./fonts.js";
 import {
   fetchBinaryData,
@@ -71,7 +73,6 @@ import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
 import { ColorSpaceUtils } from "./colorspace_utils.js";
 import { DecodeStream } from "./decode_stream.js";
-import { FontFlags } from "./fonts_utils.js";
 import { getFontSubstitution } from "./font_substitutions.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
@@ -179,14 +180,17 @@ function normalizeBlendMode(value, parsingArray = false) {
   return "source-over";
 }
 
-function addLocallyCachedImageOps(opList, data) {
-  if (data.objId) {
-    opList.addDependency(data.objId);
+function addCachedImageOps(
+  opList,
+  { objId, fn, args, optionalContent, hasMask }
+) {
+  if (objId) {
+    opList.addDependency(objId);
   }
-  opList.addImageOps(data.fn, data.args, data.optionalContent, data.hasMask);
+  opList.addImageOps(fn, args, optionalContent, hasMask);
 
-  if (data.fn === OPS.paintImageMaskXObject && data.args[0]?.count > 0) {
-    data.args[0].count++;
+  if (fn === OPS.paintImageMaskXObject && args[0]?.count > 0) {
+    args[0].count++;
   }
 }
 
@@ -512,7 +516,9 @@ class PartialEvaluator {
     // If it's a group, a new canvas will be created that is the size of the
     // bounding box and translated to the correct position so we don't need to
     // apply the bounding box to it.
-    const args = group ? [matrix, null] : [matrix, bbox];
+    const f32matrix = matrix && new Float32Array(matrix);
+    const f32bbox = (!group && bbox && new Float32Array(bbox)) || null;
+    const args = [f32matrix, f32bbox];
     operatorList.addOp(OPS.paintFormXObjectBegin, args);
 
     await this.getOperatorList({
@@ -594,7 +600,7 @@ class PartialEvaluator {
     }
 
     const imageMask = dict.get("IM", "ImageMask") || false;
-    let imgData, args;
+    let imgData, fn, args;
     if (imageMask) {
       // This depends on a tmpCanvas being filled with the
       // current fillStyle, such that processing the pixel
@@ -607,6 +613,12 @@ class PartialEvaluator {
       const decode = dict.getArray("D", "Decode");
 
       if (this.parsingType3Font) {
+        // NOTE: Compared to other image resources we don't bother caching
+        // Type3-glyph image masks, since we've not come across any cases
+        // where that actually helps.
+        // In Type3-glyphs image masks are "always" inline resources,
+        // they're usually fairly small and aren't being re-used either.
+
         imgData = PDFImage.createRawMask({
           imgArray,
           width: w,
@@ -615,32 +627,21 @@ class PartialEvaluator {
           inverseDecode: decode?.[0] > 0,
           interpolate,
         });
+        args = compileType3Glyph(imgData);
 
-        imgData.cached = !!cacheKey;
-        args = [imgData];
+        if (args) {
+          operatorList.addImageOps(OPS.constructPath, args, optionalContent);
+          return;
+        }
+        warn("Cannot compile Type3 glyph.");
 
+        // If compilation failed, or was disabled, fallback to using an inline
+        // image mask; this case should be extremely rare.
         operatorList.addImageOps(
           OPS.paintImageMaskXObject,
-          args,
+          [imgData],
           optionalContent
         );
-
-        if (cacheKey) {
-          const cacheData = {
-            fn: OPS.paintImageMaskXObject,
-            args,
-            optionalContent,
-          };
-          localImageCache.set(cacheKey, imageRef, cacheData);
-
-          if (imageRef) {
-            this._regionalImageCache.set(
-              /* name = */ null,
-              imageRef,
-              cacheData
-            );
-          }
-        }
         return;
       }
 
@@ -657,18 +658,12 @@ class PartialEvaluator {
       if (imgData.isSingleOpaquePixel) {
         // Handles special case of mainly LaTeX documents which use image
         // masks to draw lines with the current fill style.
-        operatorList.addImageOps(
-          OPS.paintSolidColorImageMask,
-          [],
-          optionalContent
-        );
+        fn = OPS.paintSolidColorImageMask;
+        args = [];
+        operatorList.addImageOps(fn, args, optionalContent);
 
         if (cacheKey) {
-          const cacheData = {
-            fn: OPS.paintSolidColorImageMask,
-            args: [],
-            optionalContent,
-          };
+          const cacheData = { fn, args, optionalContent };
           localImageCache.set(cacheKey, imageRef, cacheData);
 
           if (imageRef) {
@@ -690,6 +685,7 @@ class PartialEvaluator {
         : imgData.data.length;
       this._sendImgData(objId, imgData);
 
+      fn = OPS.paintImageMaskXObject;
       args = [
         {
           data: objId,
@@ -699,19 +695,10 @@ class PartialEvaluator {
           count: 1,
         },
       ];
-      operatorList.addImageOps(
-        OPS.paintImageMaskXObject,
-        args,
-        optionalContent
-      );
+      operatorList.addImageOps(fn, args, optionalContent);
 
       if (cacheKey) {
-        const cacheData = {
-          objId,
-          fn: OPS.paintImageMaskXObject,
-          args,
-          optionalContent,
-        };
+        const cacheData = { objId, fn, args, optionalContent };
         localImageCache.set(cacheKey, imageRef, cacheData);
 
         if (imageRef) {
@@ -762,7 +749,8 @@ class PartialEvaluator {
     // If there is no imageMask, create the PDFImage and a lot
     // of image processing can be done here.
     let objId = `img_${this.idFactory.createObjId()}`,
-      cacheGlobally = false;
+      cacheGlobally = false,
+      globalCacheData = null;
 
     if (this.parsingType3Font) {
       objId = `${this.idFactory.getDocId()}_type3_${objId}`;
@@ -781,24 +769,23 @@ class PartialEvaluator {
 
     // Ensure that the dependency is added before the image is decoded.
     operatorList.addDependency(objId);
+
+    fn = OPS.paintImageXObject;
     args = [objId, w, h];
-    operatorList.addImageOps(
-      OPS.paintImageXObject,
-      args,
-      optionalContent,
-      hasMask
-    );
+    operatorList.addImageOps(fn, args, optionalContent, hasMask);
 
     if (cacheGlobally) {
+      globalCacheData = {
+        objId,
+        fn,
+        args,
+        optionalContent,
+        hasMask,
+        byteSize: 0, // Temporary entry, to avoid `setData` returning early.
+      };
+
       if (this.globalImageCache.hasDecodeFailed(imageRef)) {
-        this.globalImageCache.setData(imageRef, {
-          objId,
-          fn: OPS.paintImageXObject,
-          args,
-          optionalContent,
-          hasMask,
-          byteSize: 0, // Data is `null`, since decoding failed previously.
-        });
+        this.globalImageCache.setData(imageRef, globalCacheData);
 
         this._sendImgData(objId, /* imgData = */ null, cacheGlobally);
         return;
@@ -815,14 +802,7 @@ class PartialEvaluator {
         ]);
 
         if (localLength) {
-          this.globalImageCache.setData(imageRef, {
-            objId,
-            fn: OPS.paintImageXObject,
-            args,
-            optionalContent,
-            hasMask,
-            byteSize: 0, // Temporary entry, to avoid `setData` returning early.
-          });
+          this.globalImageCache.setData(imageRef, globalCacheData);
           this.globalImageCache.addByteSize(imageRef, localLength);
           return;
         }
@@ -864,27 +844,15 @@ class PartialEvaluator {
       });
 
     if (cacheKey) {
-      const cacheData = {
-        objId,
-        fn: OPS.paintImageXObject,
-        args,
-        optionalContent,
-        hasMask,
-      };
+      const cacheData = { objId, fn, args, optionalContent, hasMask };
       localImageCache.set(cacheKey, imageRef, cacheData);
 
       if (imageRef) {
         this._regionalImageCache.set(/* name = */ null, imageRef, cacheData);
 
         if (cacheGlobally) {
-          this.globalImageCache.setData(imageRef, {
-            objId,
-            fn: OPS.paintImageXObject,
-            args,
-            optionalContent,
-            hasMask,
-            byteSize: 0, // Temporary entry, note `addByteSize` above.
-          });
+          assert(globalCacheData, "The global cache-data must be available.");
+          this.globalImageCache.setData(imageRef, globalCacheData);
         }
       }
     }
@@ -925,7 +893,7 @@ class PartialEvaluator {
       smaskOptions,
       operatorList,
       task,
-      stateManager.state.clone(),
+      stateManager.state.clone({ newPath: true }),
       localColorSpaceCache
     );
   }
@@ -1383,80 +1351,103 @@ class PartialEvaluator {
     return promise;
   }
 
-  buildPath(operatorList, fn, args, parsingText = false) {
-    const lastIndex = operatorList.length - 1;
-    if (!args) {
-      args = [];
-    }
-    if (
-      lastIndex < 0 ||
-      operatorList.fnArray[lastIndex] !== OPS.constructPath
-    ) {
-      // Handle corrupt PDF documents that contains path operators inside of
-      // text objects, which may shift subsequent text, by enclosing the path
-      // operator in save/restore operators (fixes issue10542_reduced.pdf).
-      //
-      // Note that this will effectively disable the optimization in the
-      // `else` branch below, but given that this type of corruption is
-      // *extremely* rare that shouldn't really matter much in practice.
-      if (parsingText) {
-        warn(`Encountered path operator "${fn}" inside of a text object.`);
-        operatorList.addOp(OPS.save, null);
+  buildPath(fn, args, state) {
+    const { pathMinMax: minMax, pathBuffer } = state;
+    switch (fn | 0) {
+      case OPS.rectangle: {
+        const x = (state.currentPointX = args[0]);
+        const y = (state.currentPointY = args[1]);
+        const width = args[2];
+        const height = args[3];
+        const xw = x + width;
+        const yh = y + height;
+        if (width === 0 || height === 0) {
+          pathBuffer.push(
+            DrawOPS.moveTo,
+            x,
+            y,
+            DrawOPS.lineTo,
+            xw,
+            yh,
+            DrawOPS.closePath
+          );
+        } else {
+          pathBuffer.push(
+            DrawOPS.moveTo,
+            x,
+            y,
+            DrawOPS.lineTo,
+            xw,
+            y,
+            DrawOPS.lineTo,
+            xw,
+            yh,
+            DrawOPS.lineTo,
+            x,
+            yh,
+            DrawOPS.closePath
+          );
+        }
+        Util.rectBoundingBox(x, y, xw, yh, minMax);
+        break;
       }
-
-      let minMax;
-      switch (fn) {
-        case OPS.rectangle:
-          const x = args[0] + args[2];
-          const y = args[1] + args[3];
-          minMax = [
-            Math.min(args[0], x),
-            Math.min(args[1], y),
-            Math.max(args[0], x),
-            Math.max(args[1], y),
-          ];
-          break;
-        case OPS.moveTo:
-        case OPS.lineTo:
-          minMax = [args[0], args[1], args[0], args[1]];
-          break;
-        default:
-          minMax = [Infinity, Infinity, -Infinity, -Infinity];
-          break;
+      case OPS.moveTo: {
+        const x = (state.currentPointX = args[0]);
+        const y = (state.currentPointY = args[1]);
+        pathBuffer.push(DrawOPS.moveTo, x, y);
+        Util.pointBoundingBox(x, y, minMax);
+        break;
       }
-      operatorList.addOp(OPS.constructPath, [[fn], args, minMax]);
-
-      if (parsingText) {
-        operatorList.addOp(OPS.restore, null);
+      case OPS.lineTo: {
+        const x = (state.currentPointX = args[0]);
+        const y = (state.currentPointY = args[1]);
+        pathBuffer.push(DrawOPS.lineTo, x, y);
+        Util.pointBoundingBox(x, y, minMax);
+        break;
       }
-    } else {
-      const opArgs = operatorList.argsArray[lastIndex];
-      opArgs[0].push(fn);
-      opArgs[1].push(...args);
-      const minMax = opArgs[2];
-
-      // Compute min/max in the worker instead of the main thread.
-      // If the current matrix (when drawing) is a scaling one
-      // then min/max can be easily computed in using those values.
-      // Only rectangle, lineTo and moveTo are handled here since
-      // Bezier stuff requires to have the starting point.
-      switch (fn) {
-        case OPS.rectangle:
-          const x = args[0] + args[2];
-          const y = args[1] + args[3];
-          minMax[0] = Math.min(minMax[0], args[0], x);
-          minMax[1] = Math.min(minMax[1], args[1], y);
-          minMax[2] = Math.max(minMax[2], args[0], x);
-          minMax[3] = Math.max(minMax[3], args[1], y);
-          break;
-        case OPS.moveTo:
-        case OPS.lineTo:
-          minMax[0] = Math.min(minMax[0], args[0]);
-          minMax[1] = Math.min(minMax[1], args[1]);
-          minMax[2] = Math.max(minMax[2], args[0]);
-          minMax[3] = Math.max(minMax[3], args[1]);
-          break;
+      case OPS.curveTo: {
+        const startX = state.currentPointX;
+        const startY = state.currentPointY;
+        const [x1, y1, x2, y2, x, y] = args;
+        state.currentPointX = x;
+        state.currentPointY = y;
+        pathBuffer.push(DrawOPS.curveTo, x1, y1, x2, y2, x, y);
+        Util.bezierBoundingBox(startX, startY, x1, y1, x2, y2, x, y, minMax);
+        break;
       }
+      case OPS.curveTo2: {
+        const startX = state.currentPointX;
+        const startY = state.currentPointY;
+        const [x1, y1, x, y] = args;
+        state.currentPointX = x;
+        state.currentPointY = y;
+        pathBuffer.push(DrawOPS.curveTo, startX, startY, x1, y1, x, y);
+        Util.bezierBoundingBox(
+          startX,
+          startY,
+          startX,
+          startY,
+          x1,
+          y1,
+          x,
+          y,
+          minMax
+        );
+        break;
+      }
+      case OPS.curveTo3: {
+        const startX = state.currentPointX;
+        const startY = state.currentPointY;
+        const [x1, y1, x, y] = args;
+        state.currentPointX = x;
+        state.currentPointY = y;
+        pathBuffer.push(DrawOPS.curveTo, x1, y1, x, y, x, y);
+        Util.bezierBoundingBox(startX, startY, x1, y1, x, y, x, y, minMax);
+        break;
+      }
+      case OPS.closePath:
+        pathBuffer.push(DrawOPS.closePath);
+        break;
     }
   }
 
@@ -1731,7 +1722,6 @@ class PartialEvaluator {
 
     const self = this;
     const xref = this.xref;
-    let parsingText = false;
     const localImageCache = new LocalImageCache();
     const localColorSpaceCache = new LocalColorSpaceCache();
     const localGStateCache = new LocalGStateCache();
@@ -1786,7 +1776,7 @@ class PartialEvaluator {
             if (isValidName) {
               const localImage = localImageCache.getByName(name);
               if (localImage) {
-                addLocallyCachedImageOps(operatorList, localImage);
+                addCachedImageOps(operatorList, localImage);
                 args = null;
                 continue;
               }
@@ -1800,28 +1790,12 @@ class PartialEvaluator {
 
                 let xobj = xobjs.getRaw(name);
                 if (xobj instanceof Ref) {
-                  const localImage =
+                  const cachedImage =
                     localImageCache.getByRef(xobj) ||
-                    self._regionalImageCache.getByRef(xobj);
-                  if (localImage) {
-                    addLocallyCachedImageOps(operatorList, localImage);
-                    resolveXObject();
-                    return;
-                  }
-
-                  const globalImage = self.globalImageCache.getData(
-                    xobj,
-                    self.pageIndex
-                  );
-                  if (globalImage) {
-                    operatorList.addDependency(globalImage.objId);
-                    operatorList.addImageOps(
-                      globalImage.fn,
-                      globalImage.args,
-                      globalImage.optionalContent,
-                      globalImage.hasMask
-                    );
-
+                    self._regionalImageCache.getByRef(xobj) ||
+                    self.globalImageCache.getData(xobj, self.pageIndex);
+                  if (cachedImage) {
+                    addCachedImageOps(operatorList, cachedImage);
                     resolveXObject();
                     return;
                   }
@@ -1847,7 +1821,7 @@ class PartialEvaluator {
                       null,
                       operatorList,
                       task,
-                      stateManager.state.clone(),
+                      stateManager.state.clone({ newPath: true }),
                       localColorSpaceCache
                     )
                     .then(function () {
@@ -1909,18 +1883,12 @@ class PartialEvaluator {
                 })
             );
             return;
-          case OPS.beginText:
-            parsingText = true;
-            break;
-          case OPS.endText:
-            parsingText = false;
-            break;
           case OPS.endInlineImage:
             const cacheKey = args[0].cacheKey;
             if (cacheKey) {
               const localImage = localImageCache.getByName(cacheKey);
               if (localImage) {
-                addLocallyCachedImageOps(operatorList, localImage);
+                addCachedImageOps(operatorList, localImage);
                 args = null;
                 continue;
               }
@@ -2237,8 +2205,40 @@ class PartialEvaluator {
           case OPS.curveTo3:
           case OPS.closePath:
           case OPS.rectangle:
-            self.buildPath(operatorList, fn, args, parsingText);
+            self.buildPath(fn, args, stateManager.state);
             continue;
+          case OPS.stroke:
+          case OPS.closeStroke:
+          case OPS.fill:
+          case OPS.eoFill:
+          case OPS.fillStroke:
+          case OPS.eoFillStroke:
+          case OPS.closeFillStroke:
+          case OPS.closeEOFillStroke:
+          case OPS.endPath: {
+            const {
+              state: { pathBuffer, pathMinMax },
+            } = stateManager;
+            if (
+              fn === OPS.closeStroke ||
+              fn === OPS.closeFillStroke ||
+              fn === OPS.closeEOFillStroke
+            ) {
+              pathBuffer.push(DrawOPS.closePath);
+            }
+            if (pathBuffer.length === 0) {
+              operatorList.addOp(OPS.constructPath, [fn, [null], null]);
+            } else {
+              operatorList.addOp(OPS.constructPath, [
+                fn,
+                [new Float32Array(pathBuffer)],
+                pathMinMax.slice(),
+              ]);
+              pathBuffer.length = 0;
+              pathMinMax.set([Infinity, Infinity, -Infinity, -Infinity], 0);
+            }
+            continue;
+          }
           case OPS.markPoint:
           case OPS.markPointProps:
           case OPS.beginCompat:
@@ -4754,7 +4754,8 @@ class TranslatedFont {
       // Override the fontBBox when it's undefined/empty, or when it's at least
       // (approximately) one order of magnitude smaller than the charBBox
       // (fixes issue14999_reduced.pdf).
-      this.#computeCharBBox(charBBox);
+      this._bbox ??= [Infinity, Infinity, -Infinity, -Infinity];
+      Util.rectBoundingBox(...charBBox, this._bbox);
     }
 
     let i = 0,
@@ -4823,20 +4824,12 @@ class TranslatedFont {
         case OPS.constructPath:
           const minMax = operatorList.argsArray[i][2];
           // Override the fontBBox when it's undefined/empty (fixes 19624.pdf).
-          this.#computeCharBBox(minMax);
+          this._bbox ??= [Infinity, Infinity, -Infinity, -Infinity];
+          Util.rectBoundingBox(...minMax, this._bbox);
           break;
       }
       i++;
     }
-  }
-
-  #computeCharBBox(bbox) {
-    this._bbox ||= [Infinity, Infinity, -Infinity, -Infinity];
-
-    this._bbox[0] = Math.min(this._bbox[0], bbox[0]);
-    this._bbox[1] = Math.min(this._bbox[1], bbox[1]);
-    this._bbox[2] = Math.max(this._bbox[2], bbox[2]);
-    this._bbox[3] = Math.max(this._bbox[3], bbox[3]);
   }
 }
 
@@ -4935,6 +4928,16 @@ class EvalState {
     this._fillColorSpace = this._strokeColorSpace = ColorSpaceUtils.gray;
     this.patternFillColorSpace = null;
     this.patternStrokeColorSpace = null;
+
+    // Path stuff.
+    this.currentPointX = this.currentPointY = 0;
+    this.pathMinMax = new Float32Array([
+      Infinity,
+      Infinity,
+      -Infinity,
+      -Infinity,
+    ]);
+    this.pathBuffer = [];
   }
 
   get fillColorSpace() {
@@ -4953,8 +4956,18 @@ class EvalState {
     this._strokeColorSpace = this.patternStrokeColorSpace = colorSpace;
   }
 
-  clone() {
-    return Object.create(this);
+  clone({ newPath = false } = {}) {
+    const clone = Object.create(this);
+    if (newPath) {
+      clone.pathBuffer = [];
+      clone.pathMinMax = new Float32Array([
+        Infinity,
+        Infinity,
+        -Infinity,
+        -Infinity,
+      ]);
+    }
+    return clone;
   }
 }
 

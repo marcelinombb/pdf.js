@@ -93,9 +93,11 @@ describe("Signature Editor", () => {
           );
           expect(description).withContext(browserName).toEqual("");
           await page.waitForSelector(`${addButtonSelector}:disabled`);
+          await page.waitForSelector("#addSignatureDescInput:disabled");
 
           await page.type("#addSignatureTypeInput", "PDF.js");
           await page.waitForSelector(`${addButtonSelector}:not(:disabled)`);
+          await page.waitForSelector("#addSignatureDescInput:not(:disabled)");
 
           // The save button should be enabled now.
           await page.waitForSelector(
@@ -182,9 +184,9 @@ describe("Signature Editor", () => {
             `.altText.editDescription[title="Hello World"]`
           );
 
-          // Check the aria label.
+          // Check the aria description.
           await page.waitForSelector(
-            `${editorSelector}[aria-description="Hello World"]`
+            `${editorSelector}[aria-description="Signature editor: \u2068Hello World\u2069"]`
           );
 
           // Edit the description.
@@ -339,45 +341,44 @@ describe("Signature Editor", () => {
     });
 
     it("must check copy and paste", async () => {
-      await Promise.all(
-        pages.map(async ([browserName, page]) => {
-          await switchToSignature(page);
-          await page.click("#editorSignatureAddSignature");
+      // Run sequentially to avoid clipboard issues.
+      for (const [browserName, page] of pages) {
+        await switchToSignature(page);
+        await page.click("#editorSignatureAddSignature");
 
-          await page.waitForSelector("#addSignatureDialog", {
-            visible: true,
-          });
-          await page.type("#addSignatureTypeInput", "Hello");
-          await page.waitForSelector(`${addButtonSelector}:not(:disabled)`);
-          await page.click("#addSignatureAddButton");
+        await page.waitForSelector("#addSignatureDialog", {
+          visible: true,
+        });
+        await page.type("#addSignatureTypeInput", "Hello");
+        await page.waitForSelector(`${addButtonSelector}:not(:disabled)`);
+        await page.click("#addSignatureAddButton");
 
-          const editorSelector = getEditorSelector(0);
-          await page.waitForSelector(editorSelector, { visible: true });
-          const originalRect = await getRect(page, editorSelector);
-          const originalDescription = await page.$eval(
-            `${editorSelector} .altText.editDescription`,
-            el => el.title
-          );
+        const editorSelector = getEditorSelector(0);
+        await page.waitForSelector(editorSelector, { visible: true });
+        const originalRect = await getRect(page, editorSelector);
+        const originalDescription = await page.$eval(
+          `${editorSelector} .altText.editDescription`,
+          el => el.title
+        );
 
-          await copy(page);
-          await paste(page);
+        await copy(page);
+        await paste(page);
 
-          const pastedEditorSelector = getEditorSelector(1);
-          await page.waitForSelector(pastedEditorSelector, { visible: true });
-          const pastedRect = await getRect(page, pastedEditorSelector);
-          const pastedDescription = await page.$eval(
-            `${pastedEditorSelector} .altText.editDescription`,
-            el => el.title
-          );
+        const pastedEditorSelector = getEditorSelector(1);
+        await page.waitForSelector(pastedEditorSelector, { visible: true });
+        const pastedRect = await getRect(page, pastedEditorSelector);
+        const pastedDescription = await page.$eval(
+          `${pastedEditorSelector} .altText.editDescription`,
+          el => el.title
+        );
 
-          expect(pastedRect)
-            .withContext(`In ${browserName}`)
-            .not.toEqual(originalRect);
-          expect(pastedDescription)
-            .withContext(`In ${browserName}`)
-            .toEqual(originalDescription);
-        })
-      );
+        expect(pastedRect)
+          .withContext(`In ${browserName}`)
+          .not.toEqual(originalRect);
+        expect(pastedDescription)
+          .withContext(`In ${browserName}`)
+          .toEqual(originalDescription);
+      }
     });
   });
 

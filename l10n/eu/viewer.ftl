@@ -317,6 +317,9 @@ pdfjs-highlight-floating-button1 =
     .aria-label = Nabarmendu
 pdfjs-highlight-floating-button-label = Nabarmendu
 
+## Default editor aria labels
+
+
 ## Remove button for the various kind of editor.
 
 pdfjs-editor-remove-ink-button =
@@ -455,7 +458,6 @@ pdfjs-editor-new-alt-text-error-close-button = Itxi
 # Variables:
 #   $totalSize (Number) - the total size (in MB) of the AI model.
 #   $downloadedSize (Number) - the downloaded size (in MB) of the AI model.
-#   $percent (Number) - the percentage of the downloaded size.
 pdfjs-editor-new-alt-text-ai-model-downloading-progress = Testu alternatiboaren AA modeloa deskargatzen ({ $totalSize }/{ $downloadedSize } MB)
     .aria-valuetext = Testu alternatiboaren AA modeloa deskargatzen ({ $totalSize }/{ $downloadedSize } MB)
 # This is a button that users can click to edit the alt text they have already added.

@@ -137,7 +137,7 @@ function isValidAnnotationEditorMode(mode) {
  * @property {boolean} [supportsPinchToZoom] - Enable zooming on pinch gesture.
  *   The default value is `true`.
  * @property {boolean} [enableAutoLinking] - Enable creation of hyperlinks from
- *   text that look like URLs. The default value is `false`.
+ *   text that look like URLs. The default value is `true`.
  */
 
 class PDFPageViewBuffer {
@@ -238,7 +238,7 @@ class PDFViewer {
 
   #enableNewAltTextWhenAddingImage = false;
 
-  #enableAutoLinking = false;
+  #enableAutoLinking = true;
 
   #eventAbortController = null;
 
@@ -340,7 +340,7 @@ class PDFViewer {
     this.#mlManager = options.mlManager || null;
     this.#enableHWA = options.enableHWA || false;
     this.#supportsPinchToZoom = options.supportsPinchToZoom !== false;
-    this.#enableAutoLinking = options.enableAutoLinking || false;
+    this.#enableAutoLinking = options.enableAutoLinking !== false;
 
     this.defaultRenderingQueue = !options.renderingQueue;
     if (
@@ -711,13 +711,7 @@ class PDFViewer {
           hiddenCapability.resolve();
         }
       },
-      {
-        signal:
-          (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-          typeof AbortSignal.any === "function"
-            ? AbortSignal.any([signal, ac.signal])
-            : signal,
-      }
+      { signal: AbortSignal.any([signal, ac.signal]) }
     );
 
     await Promise.race([
@@ -914,11 +908,7 @@ class PDFViewer {
           viewer.before(element);
         }
 
-        if (
-          ((typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-            typeof AbortSignal.any === "function") &&
-          annotationEditorMode !== AnnotationEditorType.DISABLE
-        ) {
+        if (annotationEditorMode !== AnnotationEditorType.DISABLE) {
           const mode = annotationEditorMode;
 
           if (pdfDocument.isPureXfa) {

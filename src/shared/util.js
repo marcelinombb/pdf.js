@@ -344,6 +344,16 @@ const OPS = {
   constructPath: 91,
   setStrokeTransparent: 92,
   setFillTransparent: 93,
+  rawFillPath: 94,
+};
+
+// In order to have a switch statement that is fast (i.e. which use a jump
+// table), we need to have the OPS in a contiguous range.
+const DrawOPS = {
+  moveTo: 0,
+  lineTo: 1,
+  curveTo: 2,
+  closePath: 3,
 };
 
 const PasswordResponses = {
@@ -737,25 +747,39 @@ class Util {
 
   // For 2d affine transforms
   static applyTransform(p, m) {
-    const xt = p[0] * m[0] + p[1] * m[2] + m[4];
-    const yt = p[0] * m[1] + p[1] * m[3] + m[5];
-    return [xt, yt];
+    const [p0, p1] = p;
+    p[0] = p0 * m[0] + p1 * m[2] + m[4];
+    p[1] = p0 * m[1] + p1 * m[3] + m[5];
+  }
+
+  // For 2d affine transforms
+  static applyTransformToBezier(p, [m0, m1, m2, m3, m4, m5]) {
+    for (let i = 0; i < 6; i += 2) {
+      const pI = p[i];
+      const pI1 = p[i + 1];
+      p[i] = pI * m0 + pI1 * m2 + m4;
+      p[i + 1] = pI * m1 + pI1 * m3 + m5;
+    }
   }
 
   static applyInverseTransform(p, m) {
+    const [p0, p1] = p;
     const d = m[0] * m[3] - m[1] * m[2];
-    const xt = (p[0] * m[3] - p[1] * m[2] + m[2] * m[5] - m[4] * m[3]) / d;
-    const yt = (-p[0] * m[1] + p[1] * m[0] + m[4] * m[1] - m[5] * m[0]) / d;
-    return [xt, yt];
+    p[0] = (p0 * m[3] - p1 * m[2] + m[2] * m[5] - m[4] * m[3]) / d;
+    p[1] = (-p0 * m[1] + p1 * m[0] + m[4] * m[1] - m[5] * m[0]) / d;
   }
 
   // Applies the transform to the rectangle and finds the minimum axially
   // aligned bounding box.
   static getAxialAlignedBoundingBox(r, m) {
-    const p1 = this.applyTransform(r, m);
-    const p2 = this.applyTransform(r.slice(2, 4), m);
-    const p3 = this.applyTransform([r[0], r[3]], m);
-    const p4 = this.applyTransform([r[2], r[1]], m);
+    const p1 = [r[0], r[1]];
+    Util.applyTransform(p1, m);
+    const p2 = [r[2], r[3]];
+    Util.applyTransform(p2, m);
+    const p3 = [r[0], r[3]];
+    Util.applyTransform(p3, m);
+    const p4 = [r[2], r[1]];
+    Util.applyTransform(p4, m);
     return [
       Math.min(p1[0], p2[0], p3[0], p4[0]),
       Math.min(p1[1], p2[1], p3[1], p4[1]),
@@ -779,23 +803,17 @@ class Util {
   // This calculation uses Singular Value Decomposition.
   // The SVD can be represented with formula A = USV. We are interested in the
   // matrix S here because it represents the scale values.
-  static singularValueDecompose2dScale(m) {
-    const transpose = [m[0], m[2], m[1], m[3]];
-
+  static singularValueDecompose2dScale([m0, m1, m2, m3], output) {
     // Multiply matrix m with its transpose.
-    const a = m[0] * transpose[0] + m[1] * transpose[2];
-    const b = m[0] * transpose[1] + m[1] * transpose[3];
-    const c = m[2] * transpose[0] + m[3] * transpose[2];
-    const d = m[2] * transpose[1] + m[3] * transpose[3];
+    const a = m0 ** 2 + m1 ** 2;
+    const b = m0 * m2 + m1 * m3;
+    const c = m2 ** 2 + m3 ** 2;
 
     // Solve the second degree polynomial to get roots.
-    const first = (a + d) / 2;
-    const second = Math.sqrt((a + d) ** 2 - 4 * (a * d - c * b)) / 2;
-    const sx = first + second || 1;
-    const sy = first - second || 1;
-
-    // Scale values are the square roots of the eigenvalues.
-    return [Math.sqrt(sx), Math.sqrt(sy)];
+    const first = (a + c) / 2;
+    const second = Math.sqrt(first ** 2 - (a * c - b ** 2));
+    output[0] = Math.sqrt(first + second || 1);
+    output[1] = Math.sqrt(first - second || 1);
   }
 
   // Normalize rectangle rect=[x1, y1, x2, y2] so that (x1,y1) < (x2,y2)
@@ -843,6 +861,20 @@ class Util {
     }
 
     return [xLow, yLow, xHigh, yHigh];
+  }
+
+  static pointBoundingBox(x, y, minMax) {
+    minMax[0] = Math.min(minMax[0], x);
+    minMax[1] = Math.min(minMax[1], y);
+    minMax[2] = Math.max(minMax[2], x);
+    minMax[3] = Math.max(minMax[3], y);
+  }
+
+  static rectBoundingBox(x0, y0, x1, y1, minMax) {
+    minMax[0] = Math.min(minMax[0], x0, x1);
+    minMax[1] = Math.min(minMax[1], y0, y1);
+    minMax[2] = Math.max(minMax[2], x0, x1);
+    minMax[3] = Math.max(minMax[3], y0, y1);
   }
 
   static #getExtremumOnCurve(x0, x1, x2, x3, y0, y1, y2, y3, t, minMax) {
@@ -913,19 +945,11 @@ class Util {
 
   // From https://github.com/adobe-webplatform/Snap.svg/blob/b365287722a72526000ac4bfcf0ce4cac2faa015/src/path.js#L852
   static bezierBoundingBox(x0, y0, x1, y1, x2, y2, x3, y3, minMax) {
-    if (minMax) {
-      minMax[0] = Math.min(minMax[0], x0, x3);
-      minMax[1] = Math.min(minMax[1], y0, y3);
-      minMax[2] = Math.max(minMax[2], x0, x3);
-      minMax[3] = Math.max(minMax[3], y0, y3);
-    } else {
-      minMax = [
-        Math.min(x0, x3),
-        Math.min(y0, y3),
-        Math.max(x0, x3),
-        Math.max(y0, y3),
-      ];
-    }
+    minMax[0] = Math.min(minMax[0], x0, x3);
+    minMax[1] = Math.min(minMax[1], y0, y3);
+    minMax[2] = Math.max(minMax[2], x0, x3);
+    minMax[3] = Math.max(minMax[3], y0, y3);
+
     this.#getExtremum(
       x0,
       x1,
@@ -954,7 +978,6 @@ class Util {
       3 * (y1 - y0),
       minMax
     );
-    return minMax;
   }
 }
 
@@ -1177,6 +1200,47 @@ if (
   };
 }
 
+// TODO: Remove this once the `javascript.options.experimental.math_sumprecise`
+//       preference is removed from Firefox.
+if (typeof Math.sumPrecise !== "function") {
+  // Note that this isn't a "proper" polyfill, but since we're only using it to
+  // replace `Array.prototype.reduce()` invocations it should be fine.
+  Math.sumPrecise = function (numbers) {
+    return numbers.reduce((a, b) => a + b, 0);
+  };
+}
+
+if (
+  typeof PDFJSDev !== "undefined" &&
+  !PDFJSDev.test("SKIP_BABEL") &&
+  typeof AbortSignal.any !== "function"
+) {
+  AbortSignal.any = function (iterable) {
+    const ac = new AbortController();
+    const { signal } = ac;
+
+    // Return immediately if any of the signals are already aborted.
+    for (const s of iterable) {
+      if (s.aborted) {
+        ac.abort(s.reason);
+        return signal;
+      }
+    }
+    // Register "abort" listeners for all signals.
+    for (const s of iterable) {
+      s.addEventListener(
+        "abort",
+        () => {
+          ac.abort(s.reason);
+        },
+        { signal } // Automatically remove the listener.
+      );
+    }
+
+    return signal;
+  };
+}
+
 export {
   _isValidExplicitDest,
   AbortException,
@@ -1197,6 +1261,7 @@ export {
   bytesToString,
   createValidAbsoluteUrl,
   DocumentActionEventType,
+  DrawOPS,
   FeatureTest,
   FONT_IDENTITY_MATRIX,
   FormatError,
