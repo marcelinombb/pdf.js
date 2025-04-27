@@ -15,23 +15,16 @@
 
 :root {
   --clear-signature-button-icon: url(images/editor-toolbar-delete.svg);
-  --signature-bg: #f9f9fb;
-  --signature-hover-bg: #f0f0f4;
+  --signature-bg: light-dark(#f9f9fb, #2b2a33);
+  --signature-hover-bg: light-dark(#f0f0f4, var(--signature-bg));
   --button-signature-bg: transparent;
   --button-signature-color: var(--main-color);
-  --button-signature-active-bg: #cfcfd8;
+  --button-signature-active-bg: light-dark(#cfcfd8, #5b5b66);
   --button-signature-active-border: none;
   --button-signature-active-color: var(--button-signature-color);
   --button-signature-border: none;
-  --button-signature-hover-bg: #e0e0e6;
+  --button-signature-hover-bg: light-dark(#e0e0e6, #52525e);
   --button-signature-hover-color: var(--button-signature-color);
-
-  @media (prefers-color-scheme: dark) {
-    --signature-bg: #2b2a33;
-    --signature-hover-bg: var(--signature-bg);
-    --button-signature-active-bg: #5b5b66;
-    --button-signature-hover-bg: #52525e;
-  }
 
   @media screen and (forced-colors: active) {
     --signature-bg: HighlightText;
@@ -163,6 +156,7 @@
   --thickness-bg: var(--dialog-bg-color);
   --thickness-label-color: var(--primary-color);
   --thickness-slider-color: var(--primary-color);
+  --thickness-border: none;
   --draw-cursor: url(images/cursor-editorInk.svg) 0 16, pointer;
 
   @media (prefers-color-scheme: dark) {
@@ -219,6 +213,7 @@
     --thickness-bg: Canvas;
     --thickness-label-color: CanvasText;
     --thickness-slider-color: ButtonText;
+    --thickness-border: 1px solid var(--border-color);
   }
 
   #addSignatureDialogLabel {
@@ -410,11 +405,17 @@
               align-items: center;
               justify-content: center;
               gap: 8px;
-              padding: 6px 8px;
+              padding: 6px 8px 7px;
               margin: 0;
               background-color: var(--thickness-bg);
               border-radius: 4px 4px 0 0;
+              border-inline: var(--thickness-border);
+              border-top: var(--thickness-border);
               pointer-events: auto;
+
+              /* Move the div in order to cover to bottom border of the area. */
+              position: relative;
+              top: 1px;
 
               > label {
                 color: var(--thickness-label-color);

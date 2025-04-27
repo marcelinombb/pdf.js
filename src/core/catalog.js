@@ -682,7 +682,7 @@ class Catalog {
           const dest = fetchDest(value);
           if (dest) {
             // Always let the NameTree take precedence.
-            dests[key] ||= dest;
+            dests[stringToPDFString(key)] ||= dest;
           }
         }
       }
@@ -701,12 +701,12 @@ class Catalog {
       }
     }
 
-    if (rawDests[0] instanceof NameTree) {
-      // Fallback to checking the *entire* NameTree, in an attempt to handle
-      // corrupt PDF documents with out-of-order NameTrees (fixes issue 10272).
+    // Always fallback to checking all destinations, in order to support:
+    //  - PDF documents with out-of-order NameTrees (fixes issue 10272).
+    //  - Destination keys that use PDFDocEncoding (fixes issue 19835).
+    if (rawDests.length) {
       const dest = this.destinations[id];
       if (dest) {
-        warn(`Found "${id}" at an incorrect position in the NameTree.`);
         return dest;
       }
     }
@@ -998,9 +998,7 @@ class Catalog {
         warn(`Bad value, for key "${key}", in ViewerPreferences: ${value}.`);
         continue;
       }
-      if (!prefs) {
-        prefs = Object.create(null);
-      }
+      prefs ??= Object.create(null);
       prefs[key] = prefValue;
     }
     return shadow(this, "viewerPreferences", prefs);
@@ -1042,9 +1040,7 @@ class Catalog {
       const nameTree = new NameTree(obj.getRaw("EmbeddedFiles"), this.xref);
       for (const [key, value] of nameTree.getAll()) {
         const fs = new FileSpec(value, this.xref);
-        if (!attachments) {
-          attachments = Object.create(null);
-        }
+        attachments ??= Object.create(null);
         attachments[stringToPDFString(key)] = fs.serializable;
       }
     }
@@ -1058,9 +1054,7 @@ class Catalog {
     if (obj instanceof Dict && obj.has("XFAImages")) {
       const nameTree = new NameTree(obj.getRaw("XFAImages"), this.xref);
       for (const [key, value] of nameTree.getAll()) {
-        if (!xfaImages) {
-          xfaImages = new Dict(this.xref);
-        }
+        xfaImages ??= new Dict(this.xref);
         xfaImages.set(stringToPDFString(key), value);
       }
     }
@@ -1613,6 +1607,9 @@ class Catalog {
           // NOTE: the destination is relative to the *remote* document.
           const remoteDest = fetchRemoteDest(action);
           if (remoteDest && typeof url === "string") {
+            // NOTE: We don't use the `updateUrlHash` function here, since
+            // the `createValidAbsoluteUrl` function (see below) already
+            // handles parsing and validation of the final URL.
             url = /* baseUrl = */ url.split("#", 1)[0] + "#" + remoteDest;
           }
           // The 'NewWindow' property, equal to `LinkTarget.BLANK`.

@@ -25,7 +25,6 @@ const isNodeJS =
   !process.versions.nw &&
   !(process.versions.electron && process.type && process.type !== "browser");
 
-const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
 const FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
 
 // Represent the percentage of the height of a single-line field over
@@ -451,6 +450,28 @@ function createValidAbsoluteUrl(url, baseUrl = null, options = null) {
   return _isValidProtocol(absoluteUrl) ? absoluteUrl : null;
 }
 
+/**
+ * Remove, or replace, the hash property of the URL.
+ *
+ * @param {URL|string} url - The absolute, or relative, URL.
+ * @param {string} hash - The hash property (use an empty string to remove it).
+ * @param {boolean} [allowRel] - Allow relative URLs.
+ * @returns {string} The resulting URL string.
+ */
+function updateUrlHash(url, hash, allowRel = false) {
+  const res = URL.parse(url);
+  if (res) {
+    res.hash = hash;
+    return res.href;
+  }
+  // Support well-formed relative URLs, necessary for `web/app.js` in GENERIC
+  // builds, by optionally falling back to string parsing.
+  if (allowRel && createValidAbsoluteUrl(url, "http://example.com")) {
+    return url.split("#", 1)[0] + `${hash ? `#${hash}` : ""}`;
+  }
+  return "";
+}
+
 function shadow(obj, prop, value, nonSerializable = false) {
   if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
@@ -581,16 +602,6 @@ function string32(value) {
 
 function objectSize(obj) {
   return Object.keys(obj).length;
-}
-
-// Ensure that the returned Object has a `null` prototype; hence why
-// `Object.fromEntries(...)` is not used.
-function objectFromMap(map) {
-  const obj = Object.create(null);
-  for (const [key, value] of map) {
-    obj[key] = value;
-  }
-  return obj;
 }
 
 // Checks the endianness of the platform.
@@ -746,24 +757,31 @@ class Util {
   }
 
   // For 2d affine transforms
-  static applyTransform(p, m) {
-    const [p0, p1] = p;
-    p[0] = p0 * m[0] + p1 * m[2] + m[4];
-    p[1] = p0 * m[1] + p1 * m[3] + m[5];
+  static applyTransform(p, m, pos = 0) {
+    const p0 = p[pos];
+    const p1 = p[pos + 1];
+    p[pos] = p0 * m[0] + p1 * m[2] + m[4];
+    p[pos + 1] = p0 * m[1] + p1 * m[3] + m[5];
   }
 
-  // For 2d affine transforms
-  static applyTransformToBezier(p, [m0, m1, m2, m3, m4, m5]) {
+  static applyTransformToBezier(p, transform, pos = 0) {
+    const m0 = transform[0];
+    const m1 = transform[1];
+    const m2 = transform[2];
+    const m3 = transform[3];
+    const m4 = transform[4];
+    const m5 = transform[5];
     for (let i = 0; i < 6; i += 2) {
-      const pI = p[i];
-      const pI1 = p[i + 1];
-      p[i] = pI * m0 + pI1 * m2 + m4;
-      p[i + 1] = pI * m1 + pI1 * m3 + m5;
+      const pI = p[pos + i];
+      const pI1 = p[pos + i + 1];
+      p[pos + i] = pI * m0 + pI1 * m2 + m4;
+      p[pos + i + 1] = pI * m1 + pI1 * m3 + m5;
     }
   }
 
   static applyInverseTransform(p, m) {
-    const [p0, p1] = p;
+    const p0 = p[0];
+    const p1 = p[1];
     const d = m[0] * m[3] - m[1] * m[2];
     p[0] = (p0 * m[3] - p1 * m[2] + m[2] * m[5] - m[4] * m[3]) / d;
     p[1] = (-p0 * m[1] + p1 * m[0] + m[4] * m[1] - m[5] * m[0]) / d;
@@ -771,21 +789,47 @@ class Util {
 
   // Applies the transform to the rectangle and finds the minimum axially
   // aligned bounding box.
-  static getAxialAlignedBoundingBox(r, m) {
-    const p1 = [r[0], r[1]];
-    Util.applyTransform(p1, m);
-    const p2 = [r[2], r[3]];
-    Util.applyTransform(p2, m);
-    const p3 = [r[0], r[3]];
-    Util.applyTransform(p3, m);
-    const p4 = [r[2], r[1]];
-    Util.applyTransform(p4, m);
-    return [
-      Math.min(p1[0], p2[0], p3[0], p4[0]),
-      Math.min(p1[1], p2[1], p3[1], p4[1]),
-      Math.max(p1[0], p2[0], p3[0], p4[0]),
-      Math.max(p1[1], p2[1], p3[1], p4[1]),
-    ];
+  static axialAlignedBoundingBox(rect, transform, output) {
+    const m0 = transform[0];
+    const m1 = transform[1];
+    const m2 = transform[2];
+    const m3 = transform[3];
+    const m4 = transform[4];
+    const m5 = transform[5];
+    const r0 = rect[0];
+    const r1 = rect[1];
+    const r2 = rect[2];
+    const r3 = rect[3];
+
+    let a0 = m0 * r0 + m4;
+    let a2 = a0;
+    let a1 = m0 * r2 + m4;
+    let a3 = a1;
+    let b0 = m3 * r1 + m5;
+    let b2 = b0;
+    let b1 = m3 * r3 + m5;
+    let b3 = b1;
+
+    if (m1 !== 0 || m2 !== 0) {
+      // Non-scaling matrix: shouldn't be frequent.
+      const m1r0 = m1 * r0;
+      const m1r2 = m1 * r2;
+      const m2r1 = m2 * r1;
+      const m2r3 = m2 * r3;
+      a0 += m2r1;
+      a3 += m2r1;
+      a1 += m2r3;
+      a2 += m2r3;
+      b0 += m1r0;
+      b3 += m1r0;
+      b1 += m1r2;
+      b2 += m1r2;
+    }
+
+    output[0] = Math.min(output[0], a0, a1, a2, a3);
+    output[1] = Math.min(output[1], b0, b1, b2, b3);
+    output[2] = Math.max(output[2], a0, a1, a2, a3);
+    output[3] = Math.max(output[3], b0, b1, b2, b3);
   }
 
   static inverseTransform(m) {
@@ -803,7 +847,11 @@ class Util {
   // This calculation uses Singular Value Decomposition.
   // The SVD can be represented with formula A = USV. We are interested in the
   // matrix S here because it represents the scale values.
-  static singularValueDecompose2dScale([m0, m1, m2, m3], output) {
+  static singularValueDecompose2dScale(matrix, output) {
+    const m0 = matrix[0];
+    const m1 = matrix[1];
+    const m2 = matrix[2];
+    const m3 = matrix[3];
     // Multiply matrix m with its transpose.
     const a = m0 ** 2 + m1 ** 2;
     const b = m0 * m2 + m1 * m3;
@@ -1270,7 +1318,6 @@ export {
   getUuid,
   getVerbosityLevel,
   hexNumbers,
-  IDENTITY_MATRIX,
   ImageKind,
   info,
   InvalidPDFException,
@@ -1280,7 +1327,6 @@ export {
   LINE_FACTOR,
   MathClamp,
   normalizeUnicode,
-  objectFromMap,
   objectSize,
   OPS,
   PageActionEventType,
@@ -1300,6 +1346,7 @@ export {
   toHexUtil,
   UnknownErrorException,
   unreachable,
+  updateUrlHash,
   utf8StringToString,
   Util,
   VerbosityLevel,

@@ -328,8 +328,11 @@ pdfjs-editor-highlight-editor =
 # “Drawing” is a noun, the string is used on the editor for drawings.
 pdfjs-editor-ink-editor =
     .aria-label = ნახაზის ჩასწორება
-pdfjs-editor-signature-editor =
-    .aria-label = ხელმოწერის ჩასწორება
+# Used when a signature editor is selected/hovered.
+# Variables:
+#   $description (String) - a string describing/labeling the signature.
+pdfjs-editor-signature-editor1 =
+    .aria-description = ხელმოწერის ჩასწორება: { $description }
 pdfjs-editor-stamp-editor =
     .aria-label = სურათის ჩასწორება
 
@@ -599,9 +602,6 @@ pdfjs-editor-edit-signature-update-button = განახლება
 
 ## Main menu for adding/removing signatures
 
-pdfjs-editor-delete-signature-button =
-    .title = ხელმოწერის მოცილება
-pdfjs-editor-delete-signature-button-label = ხელმოწერის მოცილება
 pdfjs-editor-delete-signature-button1 =
     .title = შენახული ხელმოწერის მოცილება
 pdfjs-editor-delete-signature-button-label1 = შენახული ხელმოწერის მოცილება

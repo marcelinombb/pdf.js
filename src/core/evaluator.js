@@ -19,7 +19,6 @@ import {
   DrawOPS,
   FONT_IDENTITY_MATRIX,
   FormatError,
-  IDENTITY_MATRIX,
   info,
   isArrayEqual,
   normalizeUnicode,
@@ -36,6 +35,7 @@ import { compileType3Glyph, FontFlags } from "./fonts_utils.js";
 import { ErrorFont, Font } from "./fonts.js";
 import {
   fetchBinaryData,
+  IDENTITY_MATRIX,
   isNumberArray,
   lookupMatrix,
   lookupNormalRect,
@@ -72,7 +72,6 @@ import { BaseStream } from "./base_stream.js";
 import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
 import { ColorSpaceUtils } from "./colorspace_utils.js";
-import { DecodeStream } from "./decode_stream.js";
 import { getFontSubstitution } from "./font_substitutions.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
@@ -463,9 +462,10 @@ class PartialEvaluator {
     operatorList,
     task,
     initialState,
-    localColorSpaceCache
+    localColorSpaceCache,
+    seenRefs
   ) {
-    const dict = xobj.dict;
+    const { dict } = xobj;
     const matrix = lookupMatrix(dict.getArray("Matrix"), null);
     const bbox = lookupNormalRect(dict.getArray("BBox"), null);
 
@@ -521,12 +521,15 @@ class PartialEvaluator {
     const args = [f32matrix, f32bbox];
     operatorList.addOp(OPS.paintFormXObjectBegin, args);
 
+    const localResources = dict.get("Resources");
+
     await this.getOperatorList({
       stream: xobj,
       task,
-      resources: dict.get("Resources") || resources,
+      resources: localResources instanceof Dict ? localResources : resources,
       operatorList,
       initialState,
+      prevRefs: seenRefs,
     });
     operatorList.addOp(OPS.paintFormXObjectEnd, []);
 
@@ -571,7 +574,10 @@ class PartialEvaluator {
     localImageCache,
     localColorSpaceCache,
   }) {
-    const dict = image.dict;
+    const { maxImageSize, ignoreErrors, isOffscreenCanvasSupported } =
+      this.options;
+
+    const { dict } = image;
     const imageRef = dict.objId;
     const w = dict.get("W", "Width");
     const h = dict.get("H", "Height");
@@ -580,15 +586,14 @@ class PartialEvaluator {
       warn("Image dimensions are missing, or not numbers.");
       return;
     }
-    const maxImageSize = this.options.maxImageSize;
     if (maxImageSize !== -1 && w * h > maxImageSize) {
       const msg = "Image exceeded maximum allowed size and was removed.";
 
-      if (this.options.ignoreErrors) {
-        warn(msg);
-        return;
+      if (!ignoreErrors) {
+        throw new Error(msg);
       }
-      throw new Error(msg);
+      warn(msg);
+      return;
     }
 
     let optionalContent;
@@ -607,52 +612,10 @@ class PartialEvaluator {
       // data can't be done here. Instead of creating a
       // complete PDFImage, only read the information needed
       // for later.
-      const interpolate = dict.get("I", "Interpolate");
-      const bitStrideLength = (w + 7) >> 3;
-      const imgArray = image.getBytes(bitStrideLength * h);
-      const decode = dict.getArray("D", "Decode");
-
-      if (this.parsingType3Font) {
-        // NOTE: Compared to other image resources we don't bother caching
-        // Type3-glyph image masks, since we've not come across any cases
-        // where that actually helps.
-        // In Type3-glyphs image masks are "always" inline resources,
-        // they're usually fairly small and aren't being re-used either.
-
-        imgData = PDFImage.createRawMask({
-          imgArray,
-          width: w,
-          height: h,
-          imageIsFromDecodeStream: image instanceof DecodeStream,
-          inverseDecode: decode?.[0] > 0,
-          interpolate,
-        });
-        args = compileType3Glyph(imgData);
-
-        if (args) {
-          operatorList.addImageOps(OPS.constructPath, args, optionalContent);
-          return;
-        }
-        warn("Cannot compile Type3 glyph.");
-
-        // If compilation failed, or was disabled, fallback to using an inline
-        // image mask; this case should be extremely rare.
-        operatorList.addImageOps(
-          OPS.paintImageMaskXObject,
-          [imgData],
-          optionalContent
-        );
-        return;
-      }
-
       imgData = await PDFImage.createMask({
-        imgArray,
-        width: w,
-        height: h,
-        imageIsFromDecodeStream: image instanceof DecodeStream,
-        inverseDecode: decode?.[0] > 0,
-        interpolate,
-        isOffscreenCanvasSupported: this.options.isOffscreenCanvasSupported,
+        image,
+        isOffscreenCanvasSupported:
+          isOffscreenCanvasSupported && !this.parsingType3Font,
       });
 
       if (imgData.isSingleOpaquePixel) {
@@ -674,6 +637,36 @@ class PartialEvaluator {
             );
           }
         }
+        return;
+      }
+
+      if (this.parsingType3Font) {
+        // NOTE: Compared to other image resources we don't bother caching
+        // Type3-glyph image masks, since we've not come across any cases
+        // where that actually helps.
+        // In Type3-glyphs image masks are "always" inline resources,
+        // they're usually fairly small and aren't being re-used either.
+        if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+          assert(
+            imgData.data instanceof Uint8Array,
+            "Type3 glyph image mask must be a TypedArray."
+          );
+        }
+        args = compileType3Glyph(imgData);
+
+        if (args) {
+          operatorList.addImageOps(OPS.constructPath, args, optionalContent);
+          return;
+        }
+        warn("Cannot compile Type3 glyph.");
+
+        // If compilation failed, or was disabled, fallback to using an inline
+        // image mask; this case should be extremely rare.
+        operatorList.addImageOps(
+          OPS.paintImageMaskXObject,
+          [imgData],
+          optionalContent
+        );
         return;
       }
 
@@ -728,8 +721,6 @@ class PartialEvaluator {
           /* forceRGBA = */ true,
           /* isOffscreenCanvasSupported = */ false
         );
-        operatorList.isOffscreenCanvasSupported =
-          this.options.isOffscreenCanvasSupported;
         operatorList.addImageOps(
           OPS.paintInlineImageXObject,
           [imgData],
@@ -738,7 +729,7 @@ class PartialEvaluator {
       } catch (reason) {
         const msg = `Unable to decode inline image: "${reason}".`;
 
-        if (!this.options.ignoreErrors) {
+        if (!ignoreErrors) {
           throw new Error(msg);
         }
         warn(msg);
@@ -821,8 +812,7 @@ class PartialEvaluator {
       .then(async imageObj => {
         imgData = await imageObj.createImageData(
           /* forceRGBA = */ false,
-          /* isOffscreenCanvasSupported = */ this.options
-            .isOffscreenCanvasSupported
+          isOffscreenCanvasSupported
         );
         imgData.dataLen = imgData.bitmap
           ? imgData.width * imgData.height * 4
@@ -864,7 +854,8 @@ class PartialEvaluator {
     operatorList,
     task,
     stateManager,
-    localColorSpaceCache
+    localColorSpaceCache,
+    seenRefs
   ) {
     const smaskContent = smask.get("G");
     const smaskOptions = {
@@ -894,7 +885,8 @@ class PartialEvaluator {
       operatorList,
       task,
       stateManager.state.clone({ newPath: true }),
-      localColorSpaceCache
+      localColorSpaceCache,
+      seenRefs
     );
   }
 
@@ -1079,6 +1071,7 @@ class PartialEvaluator {
     stateManager,
     localGStateCache,
     localColorSpaceCache,
+    seenRefs,
   }) {
     const gStateRef = gState.objId;
     let isSimpleGState = true;
@@ -1141,7 +1134,8 @@ class PartialEvaluator {
                 operatorList,
                 task,
                 stateManager,
-                localColorSpaceCache
+                localColorSpaceCache,
+                seenRefs
               )
             );
             gStateObj.push([key, true]);
@@ -1710,7 +1704,19 @@ class PartialEvaluator {
     operatorList,
     initialState = null,
     fallbackFontDict = null,
+    prevRefs = null,
   }) {
+    const objId = stream.dict?.objId;
+    const seenRefs = new RefSet(prevRefs);
+
+    if (objId) {
+      if (prevRefs?.has(objId)) {
+        throw new Error(
+          `getOperatorList - ignoring circular reference: ${objId}`
+        );
+      }
+      seenRefs.put(objId);
+    }
     // Ensure that `resources`/`initialState` is correctly initialized,
     // even if the provided parameter is e.g. `null`.
     resources ||= Dict.empty;
@@ -1822,7 +1828,8 @@ class PartialEvaluator {
                       operatorList,
                       task,
                       stateManager.state.clone({ newPath: true }),
-                      localColorSpaceCache
+                      localColorSpaceCache,
+                      seenRefs
                     )
                     .then(function () {
                       stateManager.restore();
@@ -2172,6 +2179,7 @@ class PartialEvaluator {
                     stateManager,
                     localGStateCache,
                     localColorSpaceCache,
+                    seenRefs,
                   })
                   .then(resolveGState, rejectGState);
               }).catch(function (reason) {
@@ -2239,6 +2247,9 @@ class PartialEvaluator {
             }
             continue;
           }
+          case OPS.setTextMatrix:
+            operatorList.addOp(fn, [new Float32Array(args)]);
+            continue;
           case OPS.markPoint:
           case OPS.markPointProps:
           case OPS.beginCompat:
@@ -2350,7 +2361,19 @@ class PartialEvaluator {
     markedContentData = null,
     disableNormalization = false,
     keepWhiteSpace = false,
+    prevRefs = null,
   }) {
+    const objId = stream.dict?.objId;
+    const seenRefs = new RefSet(prevRefs);
+
+    if (objId) {
+      if (prevRefs?.has(objId)) {
+        throw new Error(
+          `getTextContent - ignoring circular reference: ${objId}`
+        );
+      }
+      seenRefs.put(objId);
+    }
     // Ensure that `resources`/`stateManager` is correctly initialized,
     // even if the provided parameter is e.g. `null`.
     resources ||= Dict.empty;
@@ -3277,14 +3300,15 @@ class PartialEvaluator {
                 if (!(xobj instanceof BaseStream)) {
                   throw new FormatError("XObject should be a stream");
                 }
+                const { dict } = xobj;
 
-                const type = xobj.dict.get("Subtype");
+                const type = dict.get("Subtype");
                 if (!(type instanceof Name)) {
                   throw new FormatError("XObject should have a Name subtype");
                 }
 
                 if (type.name !== "Form") {
-                  emptyXObjectCache.set(name, xobj.dict.objId, true);
+                  emptyXObjectCache.set(name, dict.objId, true);
 
                   resolveXObject();
                   return;
@@ -3298,10 +3322,12 @@ class PartialEvaluator {
                 const currentState = stateManager.state.clone();
                 const xObjStateManager = new StateManager(currentState);
 
-                const matrix = lookupMatrix(xobj.dict.getArray("Matrix"), null);
+                const matrix = lookupMatrix(dict.getArray("Matrix"), null);
                 if (matrix) {
                   xObjStateManager.transform(matrix);
                 }
+
+                const localResources = dict.get("Resources");
 
                 // Enqueue the `textContent` chunk before parsing the /Form
                 // XObject.
@@ -3327,7 +3353,10 @@ class PartialEvaluator {
                   .getTextContent({
                     stream: xobj,
                     task,
-                    resources: xobj.dict.get("Resources") || resources,
+                    resources:
+                      localResources instanceof Dict
+                        ? localResources
+                        : resources,
                     stateManager: xObjStateManager,
                     includeMarkedContent,
                     sink: sinkWrapper,
@@ -3337,10 +3366,11 @@ class PartialEvaluator {
                     markedContentData,
                     disableNormalization,
                     keepWhiteSpace,
+                    prevRefs: seenRefs,
                   })
                   .then(function () {
                     if (!sinkWrapper.enqueueInvoked) {
-                      emptyXObjectCache.set(name, xobj.dict.objId, true);
+                      emptyXObjectCache.set(name, dict.objId, true);
                     }
                     resolveXObject();
                   }, rejectXObject);

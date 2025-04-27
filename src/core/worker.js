@@ -123,20 +123,19 @@ class WorkerMessageHandler {
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
       // Fail early, and predictably, rather than having (some) fonts fail to
       // load/render with slightly cryptic error messages in environments where
-      // the `Array.prototype` has been *incorrectly* extended.
+      // the `{Object, Array}.prototype` has been *incorrectly* extended.
       //
       // PLEASE NOTE: We do *not* want to slow down font parsing by adding
       //              `hasOwnProperty` checks all over the code-base.
-      const enumerableProperties = [];
-      for (const property in []) {
-        enumerableProperties.push(property);
+      const buildMsg = (type, prop) =>
+        `The \`${type}.prototype\` contains unexpected enumerable property ` +
+        `"${prop}", thus breaking e.g. \`for...in\` iteration of ${type}s.`;
+
+      for (const prop in {}) {
+        throw new Error(buildMsg("Object", prop));
       }
-      if (enumerableProperties.length) {
-        throw new Error(
-          "The `Array.prototype` contains unexpected enumerable properties: " +
-            enumerableProperties.join(", ") +
-            "; thus breaking e.g. `for...in` iteration of `Array`s."
-        );
+      for (const prop in []) {
+        throw new Error(buildMsg("Array", prop));
       }
     }
     const workerHandlerName = docId + "_worker";
@@ -674,12 +673,12 @@ class WorkerMessageHandler {
         let newXrefInfo = Object.create(null);
         if (xref.trailer) {
           // Get string info from Info in order to compute fileId.
-          const infoObj = Object.create(null);
+          const infoMap = new Map();
           const xrefInfo = xref.trailer.get("Info") || null;
           if (xrefInfo instanceof Dict) {
             for (const [key, value] of xrefInfo) {
               if (typeof value === "string") {
-                infoObj[key] = stringToPDFString(value);
+                infoMap.set(key, stringToPDFString(value));
               }
             }
           }
@@ -689,7 +688,7 @@ class WorkerMessageHandler {
             encryptRef: xref.trailer.getRaw("Encrypt") || null,
             newRef: xref.getNewTemporaryRef(),
             infoRef: xref.trailer.getRaw("Info") || null,
-            info: infoObj,
+            infoMap,
             fileIds: xref.trailer.get("ID") || null,
             startXRef: linearization
               ? startXRef

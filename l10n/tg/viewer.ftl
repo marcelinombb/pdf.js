@@ -328,8 +328,11 @@ pdfjs-editor-highlight-editor =
 # “Drawing” is a noun, the string is used on the editor for drawings.
 pdfjs-editor-ink-editor =
     .aria-label = Муҳаррири расмкашӣ
-pdfjs-editor-signature-editor =
-    .aria-label = Муҳаррири имзо
+# Used when a signature editor is selected/hovered.
+# Variables:
+#   $description (String) - a string describing/labeling the signature.
+pdfjs-editor-signature-editor1 =
+    .aria-description = Муҳаррири имзо: { $description }
 pdfjs-editor-stamp-editor =
     .aria-label = Муҳаррири тасвир
 
@@ -599,9 +602,6 @@ pdfjs-editor-edit-signature-update-button = Навсозӣ кардан
 
 ## Main menu for adding/removing signatures
 
-pdfjs-editor-delete-signature-button =
-    .title = Тоза кардани имзо
-pdfjs-editor-delete-signature-button-label = Тоза кардани имзо
 pdfjs-editor-delete-signature-button1 =
     .title = Тоза кардани имзои гузошташуда
 pdfjs-editor-delete-signature-button-label1 = Тоза кардани имзои гузошташуда

@@ -31,6 +31,7 @@ import {
   PermissionFlag,
   ResponseException,
   shadow,
+  updateUrlHash,
   Util,
   VerbosityLevel,
 } from "../../src/shared/util.js";
@@ -117,6 +118,7 @@ const expectedAPI = Object.freeze({
   SupportedImageMimeTypes,
   TextLayer,
   TouchManager,
+  updateUrlHash,
   Util,
   VerbosityLevel,
   version,
@@ -135,6 +137,10 @@ describe("pdfjs_api", function () {
     // The imported Object contains an (automatically) inserted Symbol,
     // hence we copy the data to allow using a simple comparison below.
     expect({ ...pdfjsAPI }).toEqual(expectedAPI);
+
+    expect(Object.keys(globalThis.pdfjsLib).sort()).toEqual(
+      Object.keys(expectedAPI).sort()
+    );
   });
 });
 

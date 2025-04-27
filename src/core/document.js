@@ -45,6 +45,8 @@ import {
   lookupNormalRect,
   MissingDataException,
   PDF_VERSION_REGEXP,
+  RESOURCES_KEYS_OPERATOR_LIST,
+  RESOURCES_KEYS_TEXT_CONTENT,
   validateCSSFont,
   XRefEntryException,
   XRefParseException,
@@ -419,6 +421,25 @@ class Page {
     await objectLoader.load();
   }
 
+  async #getMergedResources(streamDict, keys) {
+    // In rare cases /Resources are also found in the /Contents stream-dict,
+    // in addition to in the /Page dict, hence we need to prefer those when
+    // available (see issue18894.pdf).
+    const localResources = streamDict?.get("Resources");
+
+    if (!(localResources instanceof Dict && localResources.size)) {
+      return this.resources;
+    }
+    const objectLoader = new ObjectLoader(localResources, keys, this.xref);
+    await objectLoader.load();
+
+    return Dict.merge({
+      xref: this.xref,
+      dictArray: [localResources, this.resources],
+      mergeSubDicts: true,
+    });
+  }
+
   async getOperatorList({
     handler,
     sink,
@@ -429,15 +450,7 @@ class Page {
     modifiedIds = null,
   }) {
     const contentStreamPromise = this.getContentStream();
-    const resourcesPromise = this.loadResources([
-      "ColorSpace",
-      "ExtGState",
-      "Font",
-      "Pattern",
-      "Properties",
-      "Shading",
-      "XObject",
-    ]);
+    const resourcesPromise = this.loadResources(RESOURCES_KEYS_OPERATOR_LIST);
 
     const partialEvaluator = new PartialEvaluator({
       xref: this.xref,
@@ -525,11 +538,15 @@ class Page {
       contentStreamPromise,
       resourcesPromise,
     ]).then(async ([contentStream]) => {
+      const resources = await this.#getMergedResources(
+        contentStream.dict,
+        RESOURCES_KEYS_OPERATOR_LIST
+      );
       const opList = new OperatorList(intent, sink);
 
       handler.send("StartRenderPage", {
         transparency: partialEvaluator.hasBlendModes(
-          this.resources,
+          resources,
           this.nonBlendModesSet
         ),
         pageIndex: this.pageIndex,
@@ -539,7 +556,7 @@ class Page {
       await partialEvaluator.getOperatorList({
         stream: contentStream,
         task,
-        resources: this.resources,
+        resources,
         operatorList: opList,
       });
       return opList;
@@ -642,12 +659,7 @@ class Page {
     sink,
   }) {
     const contentStreamPromise = this.getContentStream();
-    const resourcesPromise = this.loadResources([
-      "ExtGState",
-      "Font",
-      "Properties",
-      "XObject",
-    ]);
+    const resourcesPromise = this.loadResources(RESOURCES_KEYS_TEXT_CONTENT);
     const langPromise = this.pdfManager.ensureCatalog("lang");
 
     const [contentStream, , lang] = await Promise.all([
@@ -655,6 +667,11 @@ class Page {
       resourcesPromise,
       langPromise,
     ]);
+    const resources = await this.#getMergedResources(
+      contentStream.dict,
+      RESOURCES_KEYS_TEXT_CONTENT
+    );
+
     const partialEvaluator = new PartialEvaluator({
       xref: this.xref,
       handler,
@@ -672,7 +689,7 @@ class Page {
     return partialEvaluator.getTextContent({
       stream: contentStream,
       task,
-      resources: this.resources,
+      resources,
       includeMarkedContent,
       disableNormalization,
       sink,
@@ -690,10 +707,18 @@ class Page {
     // Ensure that the structTree will contain the page's annotations.
     await this._parsedAnnotations;
 
-    const structTree = await this.pdfManager.ensure(this, "_parseStructTree", [
-      structTreeRoot,
-    ]);
-    return this.pdfManager.ensure(structTree, "serializable");
+    try {
+      const structTree = await this.pdfManager.ensure(
+        this,
+        "_parseStructTree",
+        [structTreeRoot]
+      );
+      const data = await this.pdfManager.ensure(structTree, "serializable");
+      return data;
+    } catch (ex) {
+      warn(`getStructTree: "${ex}".`);
+      return null;
+    }
   }
 
   /**
@@ -1100,24 +1125,26 @@ class PDFDocument {
   }
 
   get _xfaStreams() {
-    const acroForm = this.catalog.acroForm;
+    const { acroForm } = this.catalog;
     if (!acroForm) {
       return null;
     }
 
     const xfa = acroForm.get("XFA");
-    const entries = {
-      "xdp:xdp": "",
-      template: "",
-      datasets: "",
-      config: "",
-      connectionSet: "",
-      localeSet: "",
-      stylesheet: "",
-      "/xdp:xdp": "",
-    };
+    const entries = new Map(
+      [
+        "xdp:xdp",
+        "template",
+        "datasets",
+        "config",
+        "connectionSet",
+        "localeSet",
+        "stylesheet",
+        "/xdp:xdp",
+      ].map(e => [e, null])
+    );
     if (xfa instanceof BaseStream && !xfa.isEmpty) {
-      entries["xdp:xdp"] = xfa;
+      entries.set("xdp:xdp", xfa);
       return entries;
     }
 
@@ -1135,14 +1162,14 @@ class PDFDocument {
         name = xfa[i];
       }
 
-      if (!entries.hasOwnProperty(name)) {
+      if (!entries.has(name)) {
         continue;
       }
       const data = this.xref.fetchIfRef(xfa[i + 1]);
       if (!(data instanceof BaseStream) || data.isEmpty) {
         continue;
       }
-      entries[name] = data;
+      entries.set(name, data);
     }
     return entries;
   }
@@ -1153,7 +1180,7 @@ class PDFDocument {
       return shadow(this, "xfaDatasets", null);
     }
     for (const key of ["datasets", "xdp:xdp"]) {
-      const stream = streams[key];
+      const stream = streams.get(key);
       if (!stream) {
         continue;
       }
@@ -1175,7 +1202,7 @@ class PDFDocument {
       return null;
     }
     const data = Object.create(null);
-    for (const [key, stream] of Object.entries(streams)) {
+    for (const [key, stream] of streams) {
       if (!stream) {
         continue;
       }
@@ -1513,9 +1540,7 @@ class PDFDocument {
             warn(`Bad value, for custom key "${key}", in Info: ${value}.`);
             continue;
           }
-          if (!docInfo.Custom) {
-            docInfo.Custom = Object.create(null);
-          }
+          docInfo.Custom ??= Object.create(null);
           docInfo.Custom[key] = customValue;
           continue;
       }

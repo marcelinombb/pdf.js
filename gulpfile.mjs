@@ -31,9 +31,9 @@ import Metalsmith from "metalsmith";
 import ordered from "ordered-read-streams";
 import path from "path";
 import postcss from "gulp-postcss";
-import postcssDarkThemeClass from "postcss-dark-theme-class";
 import postcssDirPseudoClass from "postcss-dir-pseudo-class";
 import postcssDiscardComments from "postcss-discard-comments";
+import postcssLightDarkFunction from "@csstools/postcss-light-dark-function";
 import postcssNesting from "postcss-nesting";
 import { preprocess } from "./external/builder/builder.mjs";
 import relative from "metalsmith-html-relative";
@@ -362,10 +362,6 @@ function createWebpackConfig(
                   // V8 chokes on very long sequences, work around that.
                   sequences: false,
                 },
-                mangle: {
-                  // Ensure that the `tweakWebpackOutput` function works.
-                  reserved: ["__webpack_exports__"],
-                },
                 keep_classnames: true,
                 keep_fnames: true,
                 module: isModule,
@@ -463,13 +459,6 @@ function checkChromePreferencesFile(chromePrefsPath, webPrefs) {
   return ret;
 }
 
-function tweakWebpackOutput(jsName) {
-  return replace(
-    /((?:\s|,)__webpack_exports__)(?:\s?)=(?:\s?)({};)/gm,
-    (match, p1, p2) => `${p1} = globalThis.${jsName} = ${p2}`
-  );
-}
-
 function createMainBundle(defines) {
   const mainFileConfig = createWebpackConfig(defines, {
     filename: defines.MINIFIED ? "pdf.min.mjs" : "pdf.mjs",
@@ -479,8 +468,7 @@ function createMainBundle(defines) {
   });
   return gulp
     .src("./src/pdf.js", { encoding: false })
-    .pipe(webpack2Stream(mainFileConfig))
-    .pipe(tweakWebpackOutput("pdfjsLib"));
+    .pipe(webpack2Stream(mainFileConfig));
 }
 
 function createScriptingBundle(defines, extraOptions = undefined) {
@@ -548,8 +536,7 @@ function createSandboxBundle(defines, extraOptions = undefined) {
 
   return gulp
     .src("./src/pdf.sandbox.js", { encoding: false })
-    .pipe(webpack2Stream(sandboxFileConfig))
-    .pipe(tweakWebpackOutput("pdfjsSandbox"));
+    .pipe(webpack2Stream(sandboxFileConfig));
 }
 
 function createWorkerBundle(defines) {
@@ -561,8 +548,7 @@ function createWorkerBundle(defines) {
   });
   return gulp
     .src("./src/pdf.worker.js", { encoding: false })
-    .pipe(webpack2Stream(workerFileConfig))
-    .pipe(tweakWebpackOutput("pdfjsWorker"));
+    .pipe(webpack2Stream(workerFileConfig));
 }
 
 function createWebBundle(defines, options) {
@@ -610,8 +596,7 @@ function createComponentsBundle(defines) {
   });
   return gulp
     .src("./web/pdf_viewer.component.js", { encoding: false })
-    .pipe(webpack2Stream(componentsFileConfig))
-    .pipe(tweakWebpackOutput("pdfjsViewer"));
+    .pipe(webpack2Stream(componentsFileConfig));
 }
 
 function createImageDecodersBundle(defines) {
@@ -625,8 +610,7 @@ function createImageDecodersBundle(defines) {
   });
   return gulp
     .src("./src/pdf.image_decoders.js", { encoding: false })
-    .pipe(webpack2Stream(componentsFileConfig))
-    .pipe(tweakWebpackOutput("pdfjsImageDecoders"));
+    .pipe(webpack2Stream(componentsFileConfig));
 }
 
 function createCMapBundle() {
@@ -1109,7 +1093,7 @@ function buildGeneric(defines, dir) {
           postcssDirPseudoClass(),
           discardCommentsCSS(),
           postcssNesting(),
-          postcssDarkThemeClass(),
+          postcssLightDarkFunction({ preserve: true }),
           autoprefixer(AUTOPREFIXER_CONFIG),
         ])
       )
@@ -1186,7 +1170,6 @@ function buildComponents(defines, dir) {
     "web/images/messageBar_*.svg",
     "web/images/toolbarButton-{editorHighlight,menuArrow}.svg",
     "web/images/cursor-*.svg",
-    "web/images/secondaryToolbarButton-documentProperties.svg",
   ];
 
   return ordered([
@@ -1200,6 +1183,7 @@ function buildComponents(defines, dir) {
           postcssDirPseudoClass(),
           discardCommentsCSS(),
           postcssNesting(),
+          postcssLightDarkFunction({ preserve: true }),
           autoprefixer(AUTOPREFIXER_CONFIG),
         ])
       )
@@ -1445,7 +1429,6 @@ gulp.task(
           .pipe(
             postcss([
               discardCommentsCSS(),
-              postcssDarkThemeClass(),
               autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG),
             ])
           )
@@ -1456,7 +1439,6 @@ gulp.task(
           .pipe(
             postcss([
               discardCommentsCSS(),
-              postcssDarkThemeClass(),
               autoprefixer(MOZCENTRAL_AUTOPREFIXER_CONFIG),
             ])
           )
@@ -1553,7 +1535,7 @@ gulp.task(
               postcssDirPseudoClass(),
               discardCommentsCSS(),
               postcssNesting(),
-              postcssDarkThemeClass(),
+              postcssLightDarkFunction({ preserve: true }),
               autoprefixer(AUTOPREFIXER_CONFIG),
             ])
           )
@@ -2333,7 +2315,7 @@ function packageJson() {
       url: `git+${DIST_GIT_URL}`,
     },
     engines: {
-      node: ">=20",
+      node: ">=20.16.0 || >=22.3.0",
     },
     scripts: {},
   };

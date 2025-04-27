@@ -17,10 +17,8 @@ import {
   DrawOPS,
   FeatureTest,
   FONT_IDENTITY_MATRIX,
-  IDENTITY_MATRIX,
   ImageKind,
   info,
-  isNodeJS,
   OPS,
   shadow,
   TextRenderingMode,
@@ -62,6 +60,14 @@ const SCALE_MATRIX = new DOMMatrix();
 
 // Used to get some coordinates.
 const XY = new Float32Array(2);
+
+// Initial rectangle values for the minMax array.
+const MIN_MAX_INIT = new Float32Array([
+  Infinity,
+  Infinity,
+  -Infinity,
+  -Infinity,
+]);
 
 /**
  * Overrides certain methods on a 2d ctx so that when they are called they
@@ -117,47 +123,47 @@ function mirrorContextOperations(ctx, destCtx) {
     delete ctx._removeMirroring;
   };
 
-  ctx.save = function ctxSave() {
+  ctx.save = function () {
     destCtx.save();
     this.__originalSave();
   };
 
-  ctx.restore = function ctxRestore() {
+  ctx.restore = function () {
     destCtx.restore();
     this.__originalRestore();
   };
 
-  ctx.translate = function ctxTranslate(x, y) {
+  ctx.translate = function (x, y) {
     destCtx.translate(x, y);
     this.__originalTranslate(x, y);
   };
 
-  ctx.scale = function ctxScale(x, y) {
+  ctx.scale = function (x, y) {
     destCtx.scale(x, y);
     this.__originalScale(x, y);
   };
 
-  ctx.transform = function ctxTransform(a, b, c, d, e, f) {
+  ctx.transform = function (a, b, c, d, e, f) {
     destCtx.transform(a, b, c, d, e, f);
     this.__originalTransform(a, b, c, d, e, f);
   };
 
-  ctx.setTransform = function ctxSetTransform(a, b, c, d, e, f) {
+  ctx.setTransform = function (a, b, c, d, e, f) {
     destCtx.setTransform(a, b, c, d, e, f);
     this.__originalSetTransform(a, b, c, d, e, f);
   };
 
-  ctx.resetTransform = function ctxResetTransform() {
+  ctx.resetTransform = function () {
     destCtx.resetTransform();
     this.__originalResetTransform();
   };
 
-  ctx.rotate = function ctxRotate(angle) {
+  ctx.rotate = function (angle) {
     destCtx.rotate(angle);
     this.__originalRotate(angle);
   };
 
-  ctx.clip = function ctxRotate(rule) {
+  ctx.clip = function (rule) {
     destCtx.clip(rule);
     this.__originalClip(rule);
   };
@@ -297,73 +303,76 @@ function drawImageAtIntegerCoords(
 }
 
 class CanvasExtraState {
-  constructor(width, height) {
-    // Are soft masks and alpha values shapes or opacities?
-    this.alphaIsShape = false;
-    this.fontSize = 0;
-    this.fontSizeScale = 1;
-    this.textMatrix = IDENTITY_MATRIX;
-    this.textMatrixScale = 1;
-    this.fontMatrix = FONT_IDENTITY_MATRIX;
-    this.leading = 0;
-    // Current point (in user coordinates)
-    this.x = 0;
-    this.y = 0;
-    // Start of text line (in text coordinates)
-    this.lineX = 0;
-    this.lineY = 0;
-    // Character and word spacing
-    this.charSpacing = 0;
-    this.wordSpacing = 0;
-    this.textHScale = 1;
-    this.textRenderingMode = TextRenderingMode.FILL;
-    this.textRise = 0;
-    // Default fore and background colors
-    this.fillColor = "#000000";
-    this.strokeColor = "#000000";
-    this.patternFill = false;
-    this.patternStroke = false;
-    // Note: fill alpha applies to all non-stroking operations
-    this.fillAlpha = 1;
-    this.strokeAlpha = 1;
-    this.lineWidth = 1;
-    this.activeSMask = null;
-    this.transferMaps = "none";
+  // Are soft masks and alpha values shapes or opacities?
+  alphaIsShape = false;
 
-    this.startNewPathAndClipBox([0, 0, width, height]);
+  fontSize = 0;
+
+  fontSizeScale = 1;
+
+  textMatrix = null;
+
+  textMatrixScale = 1;
+
+  fontMatrix = FONT_IDENTITY_MATRIX;
+
+  leading = 0;
+
+  // Current point (in user coordinates)
+  x = 0;
+
+  y = 0;
+
+  // Start of text line (in text coordinates)
+  lineX = 0;
+
+  lineY = 0;
+
+  // Character and word spacing
+  charSpacing = 0;
+
+  wordSpacing = 0;
+
+  textHScale = 1;
+
+  textRenderingMode = TextRenderingMode.FILL;
+
+  textRise = 0;
+
+  // Default fore and background colors
+  fillColor = "#000000";
+
+  strokeColor = "#000000";
+
+  patternFill = false;
+
+  patternStroke = false;
+
+  // Note: fill alpha applies to all non-stroking operations
+  fillAlpha = 1;
+
+  strokeAlpha = 1;
+
+  lineWidth = 1;
+
+  activeSMask = null;
+
+  transferMaps = "none";
+
+  constructor(width, height) {
+    this.clipBox = new Float32Array([0, 0, width, height]);
+    this.minMax = MIN_MAX_INIT.slice();
   }
 
   clone() {
     const clone = Object.create(this);
     clone.clipBox = this.clipBox.slice();
+    clone.minMax = this.minMax.slice();
     return clone;
   }
 
-  updateRectMinMax([m0, m1, m2, m3, m4, m5], [r0, r1, r2, r3]) {
-    const m0r0m4 = m0 * r0 + m4;
-    const m0r2m4 = m0 * r2 + m4;
-    const m1r0m5 = m1 * r0 + m5;
-    const m1r2m5 = m1 * r2 + m5;
-    const m2r1 = m2 * r1;
-    const m2r3 = m2 * r3;
-    const m3r1 = m3 * r1;
-    const m3r3 = m3 * r3;
-    const a0 = m0r0m4 + m2r1;
-    const a1 = m0r2m4 + m2r3;
-    const a2 = m0r0m4 + m2r3;
-    const a3 = m0r2m4 + m2r1;
-    const b0 = m1r0m5 + m3r1;
-    const b1 = m1r2m5 + m3r3;
-    const b2 = m1r0m5 + m3r3;
-    const b3 = m1r2m5 + m3r1;
-    this.minX = Math.min(this.minX, a0, a1, a2, a3);
-    this.maxX = Math.max(this.maxX, a0, a1, a2, a3);
-    this.minY = Math.min(this.minY, b0, b1, b2, b3);
-    this.maxY = Math.max(this.maxY, b0, b1, b2, b3);
-  }
-
   getPathBoundingBox(pathType = PathType.FILL, transform = null) {
-    const box = [this.minX, this.minY, this.maxX, this.maxY];
+    const box = this.minMax.slice();
     if (pathType === PathType.STROKE) {
       if (!transform) {
         unreachable("Stroke bounding box must include transform.");
@@ -387,15 +396,12 @@ class CanvasExtraState {
   }
 
   isEmptyClip() {
-    return this.minX === Infinity;
+    return this.minMax[0] === Infinity;
   }
 
   startNewPathAndClipBox(box) {
-    this.clipBox = box;
-    this.minX = Infinity;
-    this.minY = Infinity;
-    this.maxX = 0;
-    this.maxY = 0;
+    this.clipBox.set(box, 0);
+    this.minMax.set(MIN_MAX_INIT, 0);
   }
 
   getClippedPathBoundingBox(pathType = PathType.FILL, transform = null) {
@@ -605,14 +611,9 @@ function resetCtxToDefault(ctx) {
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
   }
-  if (
-    (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-    !isNodeJS
-  ) {
-    const { filter } = ctx;
-    if (filter !== "none" && filter !== "") {
-      ctx.filter = "none";
-    }
+  const { filter } = ctx;
+  if (filter !== "none" && filter !== "") {
+    ctx.filter = "none";
   }
 }
 
@@ -1014,10 +1015,9 @@ class CanvasGraphics {
       0,
     ]);
     maskToCanvas = Util.transform(maskToCanvas, [1, 0, 0, 1, 0, -height]);
-    const [minX, minY, maxX, maxY] = Util.getAxialAlignedBoundingBox(
-      [0, 0, width, height],
-      maskToCanvas
-    );
+    const minMax = MIN_MAX_INIT.slice();
+    Util.axialAlignedBoundingBox([0, 0, width, height], maskToCanvas, minMax);
+    const [minX, minY, maxX, maxY] = minMax;
     const drawnWidth = Math.round(maxX - minX) || 1;
     const drawnHeight = Math.round(maxY - minY) || 1;
     const fillCanvas = this.cachedCanvases.getCanvas(
@@ -1458,7 +1458,11 @@ class CanvasGraphics {
       }
       path = path2d;
     }
-    this.current.updateRectMinMax(getCurrentTransform(this.ctx), minMax);
+    Util.axialAlignedBoundingBox(
+      minMax,
+      getCurrentTransform(this.ctx),
+      this.current.minMax
+    );
     this[op](path);
   }
 
@@ -1606,7 +1610,7 @@ class CanvasGraphics {
 
   // Text
   beginText() {
-    this.current.textMatrix = IDENTITY_MATRIX;
+    this.current.textMatrix = null;
     this.current.textMatrixScale = 1;
     this.current.x = this.current.lineX = 0;
     this.current.y = this.current.lineY = 0;
@@ -1727,12 +1731,13 @@ class CanvasGraphics {
     this.moveText(x, y);
   }
 
-  setTextMatrix(a, b, c, d, e, f) {
-    this.current.textMatrix = [a, b, c, d, e, f];
-    this.current.textMatrixScale = Math.hypot(a, b);
+  setTextMatrix(matrix) {
+    const { current } = this;
+    current.textMatrix = matrix;
+    current.textMatrixScale = Math.hypot(matrix[0], matrix[1]);
 
-    this.current.x = this.current.lineX = 0;
-    this.current.y = this.current.lineY = 0;
+    current.x = current.lineX = 0;
+    current.y = current.lineY = 0;
   }
 
   nextLine() {
@@ -1899,7 +1904,9 @@ class CanvasGraphics {
       !current.patternFill;
 
     ctx.save();
-    ctx.transform(...current.textMatrix);
+    if (current.textMatrix) {
+      ctx.transform(...current.textMatrix);
+    }
     ctx.translate(current.x, current.y + current.textRise);
 
     if (fontDirection > 0) {
@@ -2094,7 +2101,9 @@ class CanvasGraphics {
     this._cachedGetSinglePixelWidth = null;
 
     ctx.save();
-    ctx.transform(...current.textMatrix);
+    if (current.textMatrix) {
+      ctx.transform(...current.textMatrix);
+    }
     ctx.translate(current.x, current.y + current.textRise);
 
     ctx.scale(textHScale, fontDirection);
@@ -2240,10 +2249,9 @@ class CanvasGraphics {
     const inv = getCurrentTransformInverse(ctx);
     if (inv) {
       const { width, height } = ctx.canvas;
-      const [x0, y0, x1, y1] = Util.getAxialAlignedBoundingBox(
-        [0, 0, width, height],
-        inv
-      );
+      const minMax = MIN_MAX_INIT.slice();
+      Util.axialAlignedBoundingBox([0, 0, width, height], inv, minMax);
+      const [x0, y0, x1, y1] = minMax;
 
       this.ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
     } else {
@@ -2282,7 +2290,11 @@ class CanvasGraphics {
     this.baseTransform = getCurrentTransform(this.ctx);
 
     if (bbox) {
-      this.current.updateRectMinMax(this.baseTransform, bbox);
+      Util.axialAlignedBoundingBox(
+        bbox,
+        this.baseTransform,
+        this.current.minMax
+      );
       const [x0, y0, x1, y1] = bbox;
       const clip = new Path2D();
       clip.rect(x0, y0, x1 - x0, y1 - y0);
@@ -2346,10 +2358,13 @@ class CanvasGraphics {
 
     // Based on the current transform figure out how big the bounding box
     // will actually be.
-    let bounds = Util.getAxialAlignedBoundingBox(
+    let bounds = MIN_MAX_INIT.slice();
+    Util.axialAlignedBoundingBox(
       group.bbox,
-      getCurrentTransform(currentCtx)
+      getCurrentTransform(currentCtx),
+      bounds
     );
+
     // Clip the bounding box to the current canvas.
     const canvasBounds = [
       0,
@@ -2448,9 +2463,11 @@ class CanvasGraphics {
       this.restore();
       this.ctx.save();
       this.ctx.setTransform(...currentMtx);
-      const dirtyBox = Util.getAxialAlignedBoundingBox(
+      const dirtyBox = MIN_MAX_INIT.slice();
+      Util.axialAlignedBoundingBox(
         [0, 0, groupCtx.canvas.width, groupCtx.canvas.height],
-        currentMtx
+        currentMtx,
+        dirtyBox
       );
       this.ctx.drawImage(groupCtx.canvas, 0, 0);
       this.ctx.restore();
@@ -2739,18 +2756,13 @@ class CanvasGraphics {
 
     this.save();
 
-    if (
-      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-      !isNodeJS
-    ) {
-      // The filter, if any, will be applied in applyTransferMapsToBitmap.
-      // It must be applied to the image before rescaling else some artifacts
-      // could appear.
-      // The final restore will reset it to its value.
-      const { filter } = ctx;
-      if (filter !== "none" && filter !== "") {
-        ctx.filter = "none";
-      }
+    // The filter, if any, will be applied in applyTransferMapsToBitmap.
+    // It must be applied to the image before rescaling else some artifacts
+    // could appear.
+    // The final restore will reset it to its value.
+    const { filter } = ctx;
+    if (filter !== "none" && filter !== "") {
+      ctx.filter = "none";
     }
 
     // scale the image to the unit square

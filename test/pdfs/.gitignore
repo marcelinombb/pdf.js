@@ -28,6 +28,7 @@
 !checkbox-bad-appearance.pdf
 !issue4684.pdf
 !issue8092.pdf
+!issue19802.pdf
 !issue5256.pdf
 !issue5801.pdf
 !issue5946.pdf
@@ -191,6 +192,7 @@
 !rotation.pdf
 !simpletype3font.pdf
 !Type3WordSpacing.pdf
+!IndexedCS_negative_and_high.pdf
 !sizes.pdf
 !javauninstall-7r.pdf
 !file_url_link.pdf
@@ -204,6 +206,7 @@
 !issue3928.pdf
 !issue8565.pdf
 !clippath.pdf
+!issue19800.pdf
 !issue8795_reduced.pdf
 !bug1755507.pdf
 !close-path-bug.pdf
@@ -470,6 +473,7 @@
 !issue6069.pdf
 !issue6106.pdf
 !issue6296.pdf
+!issue19848.pdf
 !bug852992_reduced.pdf
 !issue13271.pdf
 !issue6298.pdf
@@ -718,3 +722,4 @@
 !issue19424.pdf
 !issue18529.pdf
 !issue16742.pdf
+!chrome-text-selection-markedContent.pdf

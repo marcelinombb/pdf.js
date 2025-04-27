@@ -320,8 +320,11 @@ pdfjs-editor-highlight-editor =
 # “Drawing” is a noun, the string is used on the editor for drawings.
 pdfjs-editor-ink-editor =
     .aria-label = 绘图编辑器
-pdfjs-editor-signature-editor =
-    .aria-label = 签名编辑器
+# Used when a signature editor is selected/hovered.
+# Variables:
+#   $description (String) - a string describing/labeling the signature.
+pdfjs-editor-signature-editor1 =
+    .aria-description = 签名编辑器：{ $description }
 pdfjs-editor-stamp-editor =
     .aria-label = 图像编辑器
 
@@ -587,9 +590,6 @@ pdfjs-editor-edit-signature-update-button = 更新
 
 ## Main menu for adding/removing signatures
 
-pdfjs-editor-delete-signature-button =
-    .title = 移除签名
-pdfjs-editor-delete-signature-button-label = 移除签名
 pdfjs-editor-delete-signature-button1 =
     .title = 移除已保存的签名
 pdfjs-editor-delete-signature-button-label1 = 移除已保存的签名

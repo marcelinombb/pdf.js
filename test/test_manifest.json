@@ -24,6 +24,14 @@
     "type": "other"
   },
   {
+    "id": "issue19835",
+    "file": "pdfs/issue19835.pdf",
+    "md5": "2940a2f8a41fae299b9a599b8364d05c",
+    "rounds": 1,
+    "link": true,
+    "type": "other"
+  },
+  {
     "id": "filled-background-range",
     "file": "pdfs/filled-background.pdf",
     "md5": "2e3120255d9c3e79b96d2543b12d2589",
@@ -2852,6 +2860,14 @@
     "type": "eq"
   },
   {
+    "id": "IndexedCS_negative_and_high",
+    "file": "pdfs/IndexedCS_negative_and_high.pdf",
+    "md5": "3bbf5e6f1cf49acb075fabb0726b5fe4",
+    "link": false,
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
     "id": "issue13372",
     "file": "pdfs/issue13372.pdf",
     "md5": "0bc5329623fd554174c5e7653f904e28",
@@ -3862,6 +3878,27 @@
     "type": "eq",
     "annotations": true,
     "about": "LinkAnnotation with a relative link, and a /Catalog Base-URI."
+  },
+  {
+    "id": "issue19802",
+    "file": "pdfs/issue19802.pdf",
+    "md5": "7a431fb7951ad605f676c80636bbe5d3",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
+    "id": "issue19848-eq",
+    "file": "pdfs/issue19848.pdf",
+    "md5": "a6b05b61c883542e647b9a5a628e6422",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
+    "id": "issue19848-text",
+    "file": "pdfs/issue19848.pdf",
+    "md5": "a6b05b61c883542e647b9a5a628e6422",
+    "rounds": 1,
+    "type": "text"
   },
   {
     "id": "issue14824",
@@ -6881,6 +6918,20 @@
     "firstPage": 2,
     "lastPage": 2,
     "type": "eq"
+  },
+  {
+    "id": "issue19800-eq",
+    "file": "pdfs/issue19800.pdf",
+    "md5": "92825d3178196bdd01096c4081609efd",
+    "rounds": 1,
+    "type": "eq"
+  },
+  {
+    "id": "issue19800-text",
+    "file": "pdfs/issue19800.pdf",
+    "md5": "92825d3178196bdd01096c4081609efd",
+    "rounds": 1,
+    "type": "text"
   },
   {
     "id": "issue3438",
