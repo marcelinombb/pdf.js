@@ -326,8 +326,6 @@ const PDFViewerApplication = {
       }
     }
     if (params.has("pdfbug")) {
-      AppOptions.setAll({ pdfBug: true, fontExtraProperties: true });
-
       const enabled = params.get("pdfbug").split(",");
       try {
         await loadPDFBug();
@@ -335,6 +333,12 @@ const PDFViewerApplication = {
       } catch (ex) {
         console.error("_parseHashParams:", ex);
       }
+
+      const debugOpts = { pdfBug: true, fontExtraProperties: true };
+      if (globalThis.StepperManager?.enabled) {
+        debugOpts.minDurationToUpdateCanvas = 0;
+      }
+      AppOptions.setAll(debugOpts);
     }
     // It is not possible to change locale for the (various) extension builds.
     if (
@@ -357,6 +361,7 @@ const PDFViewerApplication = {
     // Set some specific preferences for tests.
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING")) {
       Object.assign(opts, {
+        capCanvasAreaFactor: x => parseInt(x),
         docBaseUrl: x => x,
         enableAltText: x => x === "true",
         enableAutoLinking: x => x === "true",
@@ -481,7 +486,8 @@ const PDFViewerApplication = {
 
     const enableHWA = AppOptions.get("enableHWA"),
       maxCanvasPixels = AppOptions.get("maxCanvasPixels"),
-      maxCanvasDim = AppOptions.get("maxCanvasDim");
+      maxCanvasDim = AppOptions.get("maxCanvasDim"),
+      capCanvasAreaFactor = AppOptions.get("capCanvasAreaFactor");
     const pdfViewer = (this.pdfViewer = new PDFViewer({
       container,
       viewer,
@@ -511,6 +517,7 @@ const PDFViewerApplication = {
       enablePrintAutoRotate: AppOptions.get("enablePrintAutoRotate"),
       maxCanvasPixels,
       maxCanvasDim,
+      capCanvasAreaFactor,
       enableDetailCanvas: AppOptions.get("enableDetailCanvas"),
       enablePermissions: AppOptions.get("enablePermissions"),
       pageColors,
@@ -519,6 +526,7 @@ const PDFViewerApplication = {
       enableHWA,
       supportsPinchToZoom: this.supportsPinchToZoom,
       enableAutoLinking: AppOptions.get("enableAutoLinking"),
+      minDurationToUpdateCanvas: AppOptions.get("minDurationToUpdateCanvas"),
     }));
 
     renderingQueue.setViewer(pdfViewer);
@@ -590,7 +598,8 @@ const PDFViewerApplication = {
         overlayManager,
         eventBus,
         l10n,
-        /* fileNameLookup = */ () => this._docFilename
+        /* fileNameLookup = */ () => this._docFilename,
+        /* titleLookup = */ () => this._docTitle
       );
     }
 
@@ -993,6 +1002,23 @@ const PDFViewerApplication = {
     // Use `this.url` instead of `this.baseUrl` to perform filename detection
     // based on the reference fragment as ultimate fallback if needed.
     return this._contentDispositionFilename || getPdfFilenameFromUrl(this.url);
+  },
+
+  get _docTitle() {
+    const { documentInfo, metadata } = this;
+
+    const title = metadata?.get("dc:title");
+    if (title) {
+      // Ghostscript can produce invalid 'dc:title' Metadata entries:
+      //  - The title may be "Untitled" (fixes bug 1031612).
+      //  - The title may contain incorrectly encoded characters, which thus
+      //    looks broken, hence we ignore the Metadata entry when it contains
+      //    characters from the Specials Unicode block (fixes bug 1605526).
+      if (title !== "Untitled" && !/[\uFFF0-\uFFFF]/g.test(title)) {
+        return title;
+      }
+    }
+    return documentInfo.Title;
   },
 
   /**
@@ -1613,25 +1639,12 @@ const PDFViewerApplication = {
     // Provides some basic debug information
     console.log(
       `PDF ${pdfDocument.fingerprints[0]} [${info.PDFFormatVersion} ` +
-        `${(info.Producer || "-").trim()} / ${(info.Creator || "-").trim()}] ` +
-        `(PDF.js: ${version || "?"} [${build || "?"}])`
+        `${(metadata?.get("pdf:producer") || info.Producer || "-").trim()} / ` +
+        `${(metadata?.get("xmp:creatortool") || info.Creator || "-").trim()}` +
+        `] (PDF.js: ${version || "?"} [${build || "?"}])`
     );
-    let pdfTitle = info.Title;
+    const pdfTitle = this._docTitle;
 
-    const metadataTitle = metadata?.get("dc:title");
-    if (metadataTitle) {
-      // Ghostscript can produce invalid 'dc:title' Metadata entries:
-      //  - The title may be "Untitled" (fixes bug 1031612).
-      //  - The title may contain incorrectly encoded characters, which thus
-      //    looks broken, hence we ignore the Metadata entry when it contains
-      //    characters from the Specials Unicode block (fixes bug 1605526).
-      if (
-        metadataTitle !== "Untitled" &&
-        !/[\uFFF0-\uFFFF]/g.test(metadataTitle)
-      ) {
-        pdfTitle = metadataTitle;
-      }
-    }
     if (pdfTitle) {
       this.setTitle(
         `${pdfTitle} - ${this._contentDispositionFilename || this._title}`

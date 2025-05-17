@@ -21,7 +21,6 @@ import { exec, execSync, spawn, spawnSync } from "child_process";
 import autoprefixer from "autoprefixer";
 import babel from "@babel/core";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
 import fs from "fs";
 import gulp from "gulp";
 import hljs from "highlight.js";
@@ -46,7 +45,7 @@ import webpack2 from "webpack";
 import webpackStream from "webpack-stream";
 import zip from "gulp-zip";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname;
 
 const BUILD_DIR = "build/";
 const L10N_DIR = "l10n/";
@@ -97,7 +96,7 @@ const AUTOPREFIXER_CONFIG = {
 const BABEL_TARGETS = ENV_TARGETS.join(", ");
 
 const BABEL_PRESET_ENV_OPTS = Object.freeze({
-  corejs: "3.41.0",
+  corejs: "3.42.0",
   exclude: ["web.structured-clone"],
   shippedProposals: true,
   useBuiltIns: "usage",
@@ -339,6 +338,33 @@ function createWebpackConfig(
       new webpack2.BannerPlugin({ banner: licenseHeaderLibre, raw: true })
     );
   }
+  plugins.push({
+    /** @param {import('webpack').Compiler} compiler */
+    apply(compiler) {
+      const errors = [];
+
+      compiler.hooks.afterCompile.tap("VerifyImportMeta", compilation => {
+        for (const asset of compilation.getAssets()) {
+          if (asset.name.endsWith(".mjs")) {
+            const source = asset.source.source();
+            if (
+              typeof source === "string" &&
+              /new URL\([^,)]*,\s*import\.meta\.url/.test(source)
+            ) {
+              errors.push(
+                `Output module ${asset.name} uses new URL(..., import.meta.url)`
+              );
+            }
+          }
+        }
+      });
+      compiler.hooks.afterEmit.tap("VerifyImportMeta", compilation => {
+        // Emit the errors after emitting the files, so that it's possible to
+        // look at the contents of the invalid bundle.
+        compilation.errors.push(...errors);
+      });
+    },
+  });
 
   const alias = createWebpackAlias(bundleDefines);
   const experiments = isModule ? { outputModule: true } : undefined;
@@ -361,6 +387,9 @@ function createWebpackConfig(
                 compress: {
                   // V8 chokes on very long sequences, work around that.
                   sequences: false,
+                },
+                format: {
+                  comments: /@lic|webpackIgnore|@vite-ignore/i,
                 },
                 keep_classnames: true,
                 keep_fnames: true,
@@ -461,7 +490,8 @@ function checkChromePreferencesFile(chromePrefsPath, webPrefs) {
 
 function createMainBundle(defines) {
   const mainFileConfig = createWebpackConfig(defines, {
-    filename: defines.MINIFIED ? "pdf.min.mjs" : "pdf.mjs",
+    filename:
+      defines.MINIFIED && !defines.MOZCENTRAL ? "pdf.min.mjs" : "pdf.mjs",
     library: {
       type: "module",
     },
@@ -541,7 +571,10 @@ function createSandboxBundle(defines, extraOptions = undefined) {
 
 function createWorkerBundle(defines) {
   const workerFileConfig = createWebpackConfig(defines, {
-    filename: defines.MINIFIED ? "pdf.worker.min.mjs" : "pdf.worker.mjs",
+    filename:
+      defines.MINIFIED && !defines.MOZCENTRAL
+        ? "pdf.worker.min.mjs"
+        : "pdf.worker.mjs",
     library: {
       type: "module",
     },
@@ -1358,7 +1391,7 @@ gulp.task(
   gulp.series(
     createBuildNumber,
     function scriptingMozcentral() {
-      const defines = { ...DEFINES, MOZCENTRAL: true };
+      const defines = { ...DEFINES, MOZCENTRAL: true, MINIFIED: true };
       return buildDefaultPreferences(defines, "mozcentral/");
     },
     async function prefsMozcentral() {
@@ -1367,7 +1400,7 @@ gulp.task(
     function createMozcentral() {
       console.log();
       console.log("### Building mozilla-central extension");
-      const defines = { ...DEFINES, MOZCENTRAL: true };
+      const defines = { ...DEFINES, MOZCENTRAL: true, MINIFIED: true };
       const gvDefines = { ...defines, GECKOVIEW: true };
 
       const MOZCENTRAL_DIR = BUILD_DIR + "mozcentral/",

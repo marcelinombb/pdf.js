@@ -648,30 +648,16 @@ class FeatureTest {
   }
 
   static get platform() {
-    if (
-      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-      (typeof navigator !== "undefined" &&
-        typeof navigator?.platform === "string" &&
-        typeof navigator?.userAgent === "string")
-    ) {
-      const { platform, userAgent } = navigator;
+    const { platform, userAgent } = navigator;
 
-      return shadow(this, "platform", {
-        isAndroid: userAgent.includes("Android"),
-        isLinux: platform.includes("Linux"),
-        isMac: platform.includes("Mac"),
-        isWindows: platform.includes("Win"),
-        isFirefox:
-          (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-          userAgent.includes("Firefox"),
-      });
-    }
     return shadow(this, "platform", {
-      isAndroid: false,
-      isLinux: false,
-      isMac: false,
-      isWindows: false,
-      isFirefox: false,
+      isAndroid: userAgent.includes("Android"),
+      isLinux: platform.includes("Linux"),
+      isMac: platform.includes("Mac"),
+      isWindows: platform.includes("Win"),
+      isFirefox:
+        (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+        userAgent.includes("Firefox"),
     });
   }
 
@@ -1041,9 +1027,9 @@ const PDFStringTranslateTable = [
   0x131, 0x142, 0x153, 0x161, 0x17e, 0, 0x20ac,
 ];
 
-function stringToPDFString(str) {
+function stringToPDFString(str, keepEscapeSequence = false) {
   // See section 7.9.2.2 Text String Type.
-  // The string can contain some language codes bracketed with 0x0b,
+  // The string can contain some language codes bracketed with 0x1b,
   // so we must remove them.
   if (str[0] >= "\xEF") {
     let encoding;
@@ -1066,7 +1052,7 @@ function stringToPDFString(str) {
         const decoder = new TextDecoder(encoding, { fatal: true });
         const buffer = stringToBytes(str);
         const decoded = decoder.decode(buffer);
-        if (!decoded.includes("\x1b")) {
+        if (keepEscapeSequence || !decoded.includes("\x1b")) {
           return decoded;
         }
         return decoded.replaceAll(/\x1b[^\x1b]*(?:\x1b|$)/g, "");
@@ -1079,7 +1065,7 @@ function stringToPDFString(str) {
   const strBuf = [];
   for (let i = 0, ii = str.length; i < ii; i++) {
     const charCode = str.charCodeAt(i);
-    if (charCode === 0x1b) {
+    if (!keepEscapeSequence && charCode === 0x1b) {
       // eslint-disable-next-line no-empty
       while (++i < ii && str.charCodeAt(i) !== 0x1b) {}
       continue;

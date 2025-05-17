@@ -38,14 +38,15 @@ import {
   PrintAnnotationStorage,
   SerializableEmpty,
 } from "./annotation_storage.js";
-import { FontFaceObject, FontLoader } from "./font_loader.js";
 import {
+  deprecated,
   isDataScheme,
   isValidFetchUrl,
   PageViewport,
   RenderingCancelledException,
   StatTimer,
 } from "./display_utils.js";
+import { FontFaceObject, FontLoader } from "./font_loader.js";
 import { MessageHandler, wrapReason } from "../shared/message_handler.js";
 import {
   NodeCanvasFactory,
@@ -383,15 +384,12 @@ function getDocument(src = {}) {
   };
 
   if (!worker) {
-    const workerParams = {
-      verbosity,
-      port: GlobalWorkerOptions.workerPort,
-    };
     // Worker was not provided -- creating and owning our own. If message port
     // is specified in global worker options, using it.
-    worker = workerParams.port
-      ? PDFWorker.fromPort(workerParams)
-      : new PDFWorker(workerParams);
+    worker = PDFWorker.create({
+      verbosity,
+      port: GlobalWorkerOptions.workerPort,
+    });
     task._worker = worker;
   }
 
@@ -688,20 +686,16 @@ class PDFDocumentLoadingTask {
   async destroy() {
     this.destroyed = true;
 
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-      await this._transport?.destroy();
-    } else {
-      try {
-        if (this._worker?.port) {
-          this._worker._pendingDestroy = true;
-        }
-        await this._transport?.destroy();
-      } catch (ex) {
-        if (this._worker?.port) {
-          delete this._worker._pendingDestroy;
-        }
-        throw ex;
+    try {
+      if (this._worker?.port) {
+        this._worker._pendingDestroy = true;
       }
+      await this._transport?.destroy();
+    } catch (ex) {
+      if (this._worker?.port) {
+        delete this._worker._pendingDestroy;
+      }
+      throw ex;
     }
     this._transport = null;
 
@@ -2097,11 +2091,19 @@ class LoopbackPort {
  * @param {PDFWorkerParameters} params - The worker initialization parameters.
  */
 class PDFWorker {
+  #capability = Promise.withResolvers();
+
+  #messageHandler = null;
+
+  #port = null;
+
+  #webWorker = null;
+
   static #fakeWorkerId = 0;
 
   static #isWorkerDisabled = false;
 
-  static #workerPorts;
+  static #workerPorts = new WeakMap();
 
   static {
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
@@ -2135,6 +2137,16 @@ class PDFWorker {
           new Blob([wrapper], { type: "text/javascript" })
         );
       };
+
+      this.fromPort = params => {
+        deprecated(
+          "`PDFWorker.fromPort` - please use `PDFWorker.create` instead."
+        );
+        if (!params?.port) {
+          throw new Error("PDFWorker.fromPort - invalid method signature.");
+        }
+        return this.create(params);
+      };
     }
 
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
@@ -2154,23 +2166,24 @@ class PDFWorker {
     this.destroyed = false;
     this.verbosity = verbosity;
 
-    this._readyCapability = Promise.withResolvers();
-    this._port = null;
-    this._webWorker = null;
-    this._messageHandler = null;
-
-    if (
-      (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) &&
-      port
-    ) {
-      if (PDFWorker.#workerPorts?.has(port)) {
+    if (port) {
+      if (PDFWorker.#workerPorts.has(port)) {
         throw new Error("Cannot use more than one PDFWorker per port.");
       }
-      (PDFWorker.#workerPorts ||= new WeakMap()).set(port, this);
-      this._initializeFromPort(port);
-      return;
+      PDFWorker.#workerPorts.set(port, this);
+      this.#initializeFromPort(port);
+    } else {
+      this.#initialize();
     }
-    this._initialize();
+
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+      // For testing purposes.
+      Object.defineProperty(this, "_webWorker", {
+        get() {
+          return this.#webWorker;
+        },
+      });
+    }
   }
 
   /**
@@ -2178,13 +2191,13 @@ class PDFWorker {
    * @type {Promise<void>}
    */
   get promise() {
-    return this._readyCapability.promise;
+    return this.#capability.promise;
   }
 
   #resolve() {
-    this._readyCapability.resolve();
+    this.#capability.resolve();
     // Send global setting, e.g. verbosity level.
-    this._messageHandler.send("configure", {
+    this.#messageHandler.send("configure", {
       verbosity: this.verbosity,
     });
   }
@@ -2194,7 +2207,7 @@ class PDFWorker {
    * @type {Worker}
    */
   get port() {
-    return this._port;
+    return this.#port;
   }
 
   /**
@@ -2202,23 +2215,20 @@ class PDFWorker {
    * @type {MessageHandler}
    */
   get messageHandler() {
-    return this._messageHandler;
+    return this.#messageHandler;
   }
 
-  _initializeFromPort(port) {
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-      throw new Error("Not implemented: _initializeFromPort");
-    }
-    this._port = port;
-    this._messageHandler = new MessageHandler("main", "worker", port);
-    this._messageHandler.on("ready", function () {
+  #initializeFromPort(port) {
+    this.#port = port;
+    this.#messageHandler = new MessageHandler("main", "worker", port);
+    this.#messageHandler.on("ready", () => {
       // Ignoring "ready" event -- MessageHandler should already be initialized
       // and ready to accept messages.
     });
     this.#resolve();
   }
 
-  _initialize() {
+  #initialize() {
     // If worker support isn't disabled explicit and the browser has worker
     // support, create a new web worker and test if it/the browser fulfills
     // all requirements to run parts of pdf.js in a web worker.
@@ -2228,7 +2238,7 @@ class PDFWorker {
       PDFWorker.#isWorkerDisabled ||
       PDFWorker.#mainThreadWorkerMessageHandler
     ) {
-      this._setupFakeWorker();
+      this.#setupFakeWorker();
       return;
     }
     let { workerSrc } = PDFWorker;
@@ -2253,11 +2263,11 @@ class PDFWorker {
         messageHandler.destroy();
         worker.terminate();
         if (this.destroyed) {
-          this._readyCapability.reject(new Error("Worker was destroyed"));
+          this.#capability.reject(new Error("Worker was destroyed"));
         } else {
           // Fall back to fake worker if the termination is caused by an
           // error (e.g. NetworkError / SecurityError).
-          this._setupFakeWorker();
+          this.#setupFakeWorker();
         }
       };
 
@@ -2265,7 +2275,7 @@ class PDFWorker {
       worker.addEventListener(
         "error",
         () => {
-          if (!this._webWorker) {
+          if (!this.#webWorker) {
             // Worker failed to initialize due to an error. Clean up and fall
             // back to the fake worker.
             terminateEarly();
@@ -2280,9 +2290,9 @@ class PDFWorker {
           terminateEarly();
           return;
         }
-        this._messageHandler = messageHandler;
-        this._port = worker;
-        this._webWorker = worker;
+        this.#messageHandler = messageHandler;
+        this.#port = worker;
+        this.#webWorker = worker;
 
         this.#resolve();
       });
@@ -2297,7 +2307,7 @@ class PDFWorker {
           sendTest();
         } catch {
           // We need fallback to a faked worker.
-          this._setupFakeWorker();
+          this.#setupFakeWorker();
         }
       });
 
@@ -2317,10 +2327,10 @@ class PDFWorker {
     }
     // Either workers are not supported or have thrown an exception.
     // Thus, we fallback to a faked worker.
-    this._setupFakeWorker();
+    this.#setupFakeWorker();
   }
 
-  _setupFakeWorker() {
+  #setupFakeWorker() {
     if (!PDFWorker.#isWorkerDisabled) {
       warn("Setting up fake worker.");
       PDFWorker.#isWorkerDisabled = true;
@@ -2329,11 +2339,11 @@ class PDFWorker {
     PDFWorker._setupFakeWorkerGlobal
       .then(WorkerMessageHandler => {
         if (this.destroyed) {
-          this._readyCapability.reject(new Error("Worker was destroyed"));
+          this.#capability.reject(new Error("Worker was destroyed"));
           return;
         }
         const port = new LoopbackPort();
-        this._port = port;
+        this.#port = port;
 
         // All fake workers use the same port, making id unique.
         const id = `fake${PDFWorker.#fakeWorkerId++}`;
@@ -2343,11 +2353,11 @@ class PDFWorker {
         const workerHandler = new MessageHandler(id + "_worker", id, port);
         WorkerMessageHandler.setup(workerHandler, port);
 
-        this._messageHandler = new MessageHandler(id, id + "_worker", port);
+        this.#messageHandler = new MessageHandler(id, id + "_worker", port);
         this.#resolve();
       })
       .catch(reason => {
-        this._readyCapability.reject(
+        this.#capability.reject(
           new Error(`Setting up fake worker failed: "${reason.message}".`)
         );
       });
@@ -2360,32 +2370,26 @@ class PDFWorker {
     this.destroyed = true;
 
     // We need to terminate only web worker created resource.
-    this._webWorker?.terminate();
-    this._webWorker = null;
+    this.#webWorker?.terminate();
+    this.#webWorker = null;
 
-    PDFWorker.#workerPorts?.delete(this._port);
-    this._port = null;
+    PDFWorker.#workerPorts.delete(this.#port);
+    this.#port = null;
 
-    this._messageHandler?.destroy();
-    this._messageHandler = null;
+    this.#messageHandler?.destroy();
+    this.#messageHandler = null;
   }
 
   /**
    * @param {PDFWorkerParameters} params - The worker initialization parameters.
    * @returns {PDFWorker}
    */
-  static fromPort(params) {
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-      throw new Error("Not implemented: fromPort");
-    }
-    if (!params?.port) {
-      throw new Error("PDFWorker.fromPort - invalid method signature.");
-    }
-    const cachedPort = this.#workerPorts?.get(params.port);
+  static create(params) {
+    const cachedPort = this.#workerPorts.get(params?.port);
     if (cachedPort) {
       if (cachedPort._pendingDestroy) {
         throw new Error(
-          "PDFWorker.fromPort - the worker is being destroyed.\n" +
+          "PDFWorker.create - the worker is being destroyed.\n" +
             "Please remember to await `PDFDocumentLoadingTask.destroy()`-calls."
         );
       }

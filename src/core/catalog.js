@@ -76,7 +76,7 @@ function fetchRemoteDest(action) {
       dest = dest.name;
     }
     if (typeof dest === "string") {
-      return stringToPDFString(dest);
+      return stringToPDFString(dest, /* keepEscapeSequence = */ true);
     } else if (isValidExplicitDest(dest)) {
       return JSON.stringify(dest);
     }
@@ -674,7 +674,8 @@ class Catalog {
         for (const [key, value] of obj.getAll()) {
           const dest = fetchDest(value);
           if (dest) {
-            dests[stringToPDFString(key)] = dest;
+            dests[stringToPDFString(key, /* keepEscapeSequence = */ true)] =
+              dest;
           }
         }
       } else if (obj instanceof Dict) {
@@ -682,7 +683,8 @@ class Catalog {
           const dest = fetchDest(value);
           if (dest) {
             // Always let the NameTree take precedence.
-            dests[stringToPDFString(key)] ||= dest;
+            dests[stringToPDFString(key, /* keepEscapeSequence = */ true)] ||=
+              dest;
           }
         }
       }
@@ -691,6 +693,11 @@ class Catalog {
   }
 
   getDestination(id) {
+    // Avoid extra lookup/parsing when all destinations are already available.
+    if (this.hasOwnProperty("destinations")) {
+      return this.destinations[id] ?? null;
+    }
+
     const rawDests = this.#readDests();
     for (const obj of rawDests) {
       if (obj instanceof NameTree || obj instanceof Dict) {
@@ -1022,7 +1029,7 @@ class Catalog {
       } else if (resultObj.action) {
         openAction.action = resultObj.action;
       }
-    } else if (Array.isArray(obj)) {
+    } else if (isValidExplicitDest(obj)) {
       openAction.dest = obj;
     }
     return shadow(
@@ -1041,7 +1048,8 @@ class Catalog {
       for (const [key, value] of nameTree.getAll()) {
         const fs = new FileSpec(value, this.xref);
         attachments ??= Object.create(null);
-        attachments[stringToPDFString(key)] = fs.serializable;
+        attachments[stringToPDFString(key, /* keepEscapeSequence = */ true)] =
+          fs.serializable;
       }
     }
     return shadow(this, "attachments", attachments);
@@ -1054,8 +1062,13 @@ class Catalog {
     if (obj instanceof Dict && obj.has("XFAImages")) {
       const nameTree = new NameTree(obj.getRaw("XFAImages"), this.xref);
       for (const [key, value] of nameTree.getAll()) {
-        xfaImages ??= new Dict(this.xref);
-        xfaImages.set(stringToPDFString(key), value);
+        if (value instanceof BaseStream) {
+          xfaImages ??= new Map();
+          xfaImages.set(
+            stringToPDFString(key, /* keepEscapeSequence = */ true),
+            value.getBytes()
+          );
+        }
       }
     }
     return shadow(this, "xfaImages", xfaImages);
@@ -1079,7 +1092,10 @@ class Catalog {
       } else if (typeof js !== "string") {
         return;
       }
-      js = stringToPDFString(js).replaceAll("\x00", "");
+      js = stringToPDFString(js, /* keepEscapeSequence = */ true).replaceAll(
+        "\x00",
+        ""
+      );
       // Skip empty entries, similar to the `_collectJS` function.
       if (js) {
         (javaScript ||= new Map()).set(name, js);
@@ -1089,7 +1105,10 @@ class Catalog {
     if (obj instanceof Dict && obj.has("JavaScript")) {
       const nameTree = new NameTree(obj.getRaw("JavaScript"), this.xref);
       for (const [key, value] of nameTree.getAll()) {
-        appendIfJavaScriptDict(stringToPDFString(key), value);
+        appendIfJavaScriptDict(
+          stringToPDFString(key, /* keepEscapeSequence = */ true),
+          value
+        );
       }
     }
     // Append OpenAction "JavaScript" actions, if any, to the JavaScript map.
@@ -1628,7 +1647,10 @@ class Catalog {
             const name = target.get("N");
 
             if (isName(relationship, "C") && typeof name === "string") {
-              attachment = docAttachments[stringToPDFString(name)];
+              attachment =
+                docAttachments[
+                  stringToPDFString(name, /* keepEscapeSequence = */ true)
+                ];
             }
           }
 
@@ -1694,7 +1716,11 @@ class Catalog {
             js = jsAction;
           }
 
-          const jsURL = js && recoverJsURL(stringToPDFString(js));
+          const jsURL =
+            js &&
+            recoverJsURL(
+              stringToPDFString(js, /* keepEscapeSequence = */ true)
+            );
           if (jsURL) {
             url = jsURL.url;
             resultObj.newWindow = jsURL.newWindow;
@@ -1730,7 +1756,10 @@ class Catalog {
         dest = dest.name;
       }
       if (typeof dest === "string") {
-        resultObj.dest = stringToPDFString(dest);
+        resultObj.dest = stringToPDFString(
+          dest,
+          /* keepEscapeSequence = */ true
+        );
       } else if (isValidExplicitDest(dest)) {
         resultObj.dest = dest;
       }
