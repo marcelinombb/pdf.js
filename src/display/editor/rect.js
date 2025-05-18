@@ -224,7 +224,7 @@ class RectEditor extends DrawingEditor {
       return this.serializeDeleted();
     }
 
-    const { lines, points, rect } = this.serializeDraw(isForCopying);
+    const { lines, points, rect } = this.serializeDraw(true);
     const {
       _drawingOptions: {
         stroke,
