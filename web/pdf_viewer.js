@@ -2482,6 +2482,43 @@ class PDFViewer {
     updater();
   }
 
+  getSerializedAnnotations() {
+    const rawAnnotations = this.pdfDocument.annotationStorage.getAll();
+    if (rawAnnotations) {
+      const annotations = Object.values(rawAnnotations);
+      return annotations
+        .filter(a => a.serialize)
+        .map(a => a.serialize())
+        .filter(a => a?.annotationType !== undefined);
+    }
+    return null;
+  }
+
+  async addEditorAnnotation(data) {
+    try {
+      if (typeof data === "string") {
+        data = JSON.parse(data);
+      }
+    } catch (ex) {
+      console.error("Invalid JSON string", ex);
+      return;
+    }
+    if (!Array.isArray(data)) {
+      data = [data];
+    }
+
+    await this.#annotationEditorUIManager.addSerializedEditor(
+      data,
+      true,
+      true,
+      false
+    );
+  }
+
+  removeEditorAnnotations(filter = () => true) {
+    this.#annotationEditorUIManager.removeEditors(filter);
+  }
+
   refresh(noUpdate = false, updateArgs = Object.create(null)) {
     if (!this.pdfDocument) {
       return;

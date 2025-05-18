@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { shadow, unreachable } from "../shared/util.js";
+import { objectFromMap, shadow, unreachable } from "../shared/util.js";
 import { AnnotationEditor } from "./editor/editor.js";
 import { MurmurHash3_64 } from "../shared/murmurhash3.js";
 
@@ -137,6 +137,22 @@ class AnnotationStorage {
    */
   has(key) {
     return this.#storage.has(key);
+  }
+
+  /**
+   * @returns {Object | null}
+   */
+  getAll() {
+    return this.#storage.size > 0 ? objectFromMap(this.#storage) : null;
+  }
+
+  /**
+   * @param {Object} obj
+   */
+  setAll(obj) {
+    for (const [key, val] of Object.entries(obj)) {
+      this.setValue(key, val);
+    }
   }
 
   get size() {

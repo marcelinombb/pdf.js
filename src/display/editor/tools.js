@@ -1403,7 +1403,6 @@ class AnnotationEditorUIManager {
    */
   copy(event) {
     event.preventDefault();
-
     // An editor is being edited so just commit it.
     this.#activeEditor?.commitOrRemove();
 
@@ -1421,7 +1420,6 @@ class AnnotationEditorUIManager {
     if (editors.length === 0) {
       return;
     }
-
     event.clipboardData.setData("application/pdfjs", JSON.stringify(editors));
   }
 
@@ -1450,13 +1448,26 @@ class AnnotationEditorUIManager {
       }
     }
 
-    let data = clipboardData.getData("application/pdfjs");
+    const data = clipboardData.getData("application/pdfjs");
+    await this.addSerializedEditor(data);
+  }
+
+  async addSerializedEditor(
+    data,
+    activateEditorIfNecessary = false,
+    doNotMove = false,
+    ignorePageNumber = true
+  ) {
     if (!data) {
       return;
     }
 
     try {
-      data = JSON.parse(data);
+      // #1783 modified by ngx-extended-pdf-viewer
+      if (typeof data === "string") {
+        data = JSON.parse(data);
+      }
+      // #1783 end of modification by ngx-extended-pdf-viewer
     } catch (ex) {
       warn(`paste: "${ex.message}".`);
       return;
@@ -1466,16 +1477,32 @@ class AnnotationEditorUIManager {
       return;
     }
 
+    // #1783 modified by ngx-extended-pdf-viewer
+    const previousMode = this.#mode;
+    if (
+      activateEditorIfNecessary &&
+      previousMode === AnnotationEditorType.NONE
+    ) {
+      this.updateMode(AnnotationEditorType.FREETEXT);
+    }
+    // #1783 end of modification by ngx-extended-pdf-viewer
     this.unselectAll();
-    const layer = this.currentLayer;
 
     try {
       const newEditors = [];
       for (const editor of data) {
+        // #1783 modified by ngx-extended-pdf-viewer
+        const pageNumberMissing = editor.pageIndex === undefined;
+        const useCurrentPage = ignorePageNumber || pageNumberMissing;
+        const layer = useCurrentPage
+          ? this.currentLayer
+          : this.getLayer(editor.pageIndex);
+        // #1783 end of modification by ngx-extended-pdf-viewer
         const deserializedEditor = await layer.deserialize(editor);
         if (!deserializedEditor) {
           return;
         }
+        deserializedEditor.doNotMove = doNotMove;
         newEditors.push(deserializedEditor);
       }
 
@@ -1494,6 +1521,11 @@ class AnnotationEditorUIManager {
     } catch (ex) {
       warn(`paste: "${ex.message}".`);
     }
+    // #1783 modified by ngx-extended-pdf-viewer
+    if (activateEditorIfNecessary && previousMode !== this.#mode) {
+      this.updateMode(previousMode);
+    }
+    // #1783 end of modification by ngx-extended-pdf-viewer
   }
 
   /**

@@ -472,6 +472,16 @@ function updateUrlHash(url, hash, allowRel = false) {
   return "";
 }
 
+// Ensure that the returned Object has a `null` prototype; hence why
+// `Object.fromEntries(...)` is not used.
+function objectFromMap(map) {
+  const obj = Object.create(null);
+  for (const [key, value] of map) {
+    obj[key] = value;
+  }
+  return obj;
+}
+
 function shadow(obj, prop, value, nonSerializable = false) {
   if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
@@ -1313,6 +1323,7 @@ export {
   LINE_FACTOR,
   MathClamp,
   normalizeUnicode,
+  objectFromMap,
   objectSize,
   OPS,
   PageActionEventType,
