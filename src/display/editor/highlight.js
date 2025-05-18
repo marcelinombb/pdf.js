@@ -882,9 +882,12 @@ class HighlightEditor extends AnnotationEditor {
         deleted: false,
         popupRef,
       };
-    } else if (data.annotationType && data.annotationType === AnnotationEditorType.HIGHLIGHT) {
-      // eslint-disable-next-line prefer-const
-      let { quadPoints, outlines, rect, rotation, id, color, opacity, popupRef, pageIndex, thickness } = data;
+    } else if (
+      data.annotationType &&
+      data.annotationType === AnnotationEditorType.HIGHLIGHT
+    ) {
+      // eslint-disable-next-line prefer-const, prettier/prettier
+      let { quadPoints, outlines, rect, rotation, id, color, opacity, popupRef, pageIndex, thickness} = data;
 
       // Ensure quadPoints is an array
       if (quadPoints) {
@@ -903,6 +906,7 @@ class HighlightEditor extends AnnotationEditor {
           inkLists = [outlines.points.flat()];
         } else {
           // Handle unexpected format
+          // eslint-disable-next-line no-console
           console.error("Unexpected outlines format");
           return null;
         }
